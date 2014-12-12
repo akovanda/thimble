@@ -35,10 +35,7 @@ class ProcessManager
 
   # Takes a workload with a class and start method and puts it into it's own thread.
   def launchWorker(work)
-    puts (work.methods.include? :className && work.methods.include? :start)
-    if work.methods.include? :className && (work.methods.include? :start)
-      raise "There was a missing method in the workload #{p work}"
-    end
+    validateWorkload(work)
     rd, wr = IO.pipe
     pid = fork do
       # Instantiate the object based on the name of the workload class method.
@@ -47,6 +44,15 @@ class ProcessManager
     end
     wr.close
     @pidPipe[pid] = rd
+  end
+
+  def validateWorkload(workload)
+    validateClassName(:className, workload)
+    validateClassName(:start, workload)
+  end
+
+  def validateClassName(methodName, workload)
+    raise "The method #{methodName} was missing in the workload #{p workload}" unless workload.methods.include? methodName
   end
 
 end
