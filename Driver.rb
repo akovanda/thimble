@@ -1,8 +1,8 @@
 require 'thread'
-require_relative 'ProcessManager.rb'
-require_relative 'ProcessingWork.rb'
-require_relative 'Workload.rb'
-require_relative 'WorkResult.rb'
+require_relative 'lib/ProcessManager.rb'
+require_relative 'lib/ProcessingWork.rb'
+require_relative 'lib/Workload.rb'
+require_relative 'lib/WorkResult.rb'
 
 
 workQueue = Queue.new
