@@ -5,4 +5,8 @@ class QueueItem
     @item = item
   end
 
+  def to_s
+    "Item: #{@item} \nID: #{@id}"
+  end
+
 end
