@@ -9,4 +9,8 @@ class Context
   def self.deterministic
     self.new(pids: 1, batchSize: 1, queueSize: 1)
   end
+
+  def self.small
+    self.new(pids: 1, batchSize: 3, queueSize: 3)
+  end
 end

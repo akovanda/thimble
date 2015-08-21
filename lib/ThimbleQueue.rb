@@ -1,7 +1,7 @@
 require 'thread'
 require_relative 'QueueItem'
 
-class QueueWithTimeout
+class ThimbleQueue
   attr_reader :size
   def initialize(size)
     raise ArgumentError.new("make sure there is a size for the queue greater than 1! size received #{size}") unless size >= 1
@@ -9,14 +9,14 @@ class QueueWithTimeout
     @mutex = Mutex.new
     @queue = []
     @closed = false
-    @closedImmediately = false
+    @closeNow = false
     @empty = ConditionVariable.new
     @full = ConditionVariable.new
   end
  
   def next
     @mutex.synchronize  do
-      while !@closedImmediately
+      while !@closeNow
         a = @queue.shift
         unless a.nil?
           @full.broadcast
@@ -42,6 +42,11 @@ class QueueWithTimeout
     end
   end
 
+  def close(now = false)
+    @close = true
+    @closeNow = true if now
+  end
+
   private
   def offer(x)
     if @queue.size < @size
@@ -52,15 +57,4 @@ class QueueWithTimeout
   end
 end
 
-
-a = QueueWithTimeout.new(1)
-p a.size
-b = Thread.new do 
-  puts a.next
-  puts a.next
-end
-a.push 2
-b.join
-
-#p a.pop
 

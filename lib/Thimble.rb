@@ -1,7 +1,7 @@
 
 require_relative 'Context.rb'
 require_relative 'ThimbleQueue'
-
+=begin
 module Thimble
   attr_reader :work, :context
   # Work is the array of values to be worked on (anything)
@@ -16,4 +16,15 @@ module Thimble
     work.map { |e| yield e }
   end
 end
+=end
+
+class Thimble < ThimbleQueue
+
+  def initialize(array)
+    super(array.size)
+    push(array)
+  end
+
+end
+
 
