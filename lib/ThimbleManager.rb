@@ -4,46 +4,24 @@ require_relative 'Thimble'
 # Here we will managed the Processes doing the actual work.
 
 class ThimbleManager < Thimble
-  attr_reader :context, :resultQueue, :workQueue, :batches
+  attr_reader :context, :resultQueue,
   def initialize(context, array)
     @context = context
-    @batches = {}
     super(array)
   end
 
-  def process(workQueue)
-    while !@closed
-      batch = getBatch(workQueue)
-      if batch.size < @context.batchSize
-        close(false)
-        if batch.size > 0
-          @batches[batch] = batch
-        end
-      else
-        @batches[batch] = batch
-      end
-    end
+  def process
+    
   end
 
-  def getBatch(workQueue)
-    batch = []
-    while batch.size < @context.batchSize
-      item = workQueue.next
-      puts item
-      if item.nil?
-        puts batch
-        return batch
-      else
-        batch << item
-      end
-    end
-    batch
+  def parMap
+
   end
+
+
 end
 
-m = ThimbleManager.new(Context.small)
-q = ThimbleQueue.new(5)
-Thread.new {q.push (1..20).to_a}
-sleep 1
-m.process(q)
+m = ThimbleManager.new(Context.small, (1..20000).to_a)
+m.close(false)
+m.process
 

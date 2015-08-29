@@ -14,7 +14,7 @@ class ThimbleQueue
     @full = ConditionVariable.new
   end
  
-  def next
+  def take
     @mutex.synchronize  do
       while !@closeNow
         a = @queue.shift
@@ -47,12 +47,17 @@ class ThimbleQueue
     @closeNow = true if now
   end
 
+  def closed?
+    @close
+  end
+
   private
   def offer(x)
     if @queue.size < @size
       @queue << QueueItem.new(x)
-      @empty.broadcast
+      true
     else
+      false
     end
   end
 end
