@@ -32,18 +32,18 @@ class Thimble < ThimbleQueue
     @currentPids = []
     super(array.size)
     push(array)
+    close()
+    batchWork
   end
 
   # Takes a block
   def process
-    batchWork
-    while batch = @batches.take.item.item
-      p batch
-      while (@currentPids.size < @context.pids && !@batches.closed?)
+    while !@batches.closed?
+      while (@currentPids.size.to_i<@context.pids)
+        batch = @batches.take.item.item
         @currentPids = newPid(batch, &Proc.new)
-
       end
-
+      p @currentPids
       @currentPids.each do |tup|
         while tup.reader.ready?
           @result.push(Marshal.load(tup.reader.gets))
@@ -63,7 +63,7 @@ class Thimble < ThimbleQueue
     pid = fork do
       rd.close 
       batch.each do |item|
-        wr.puts Marshal.dump(yield (item))
+        wr.puts Marshal.dump(yield (item.item))
       end
       wr.close
     end
@@ -75,21 +75,19 @@ class Thimble < ThimbleQueue
 
   # We will prep as many batches as the context allows
   def batchWork
-    Thread.new do
-      while !@closed
-        batch = getBatch
-        if batch.item.size < @context.batchSize
-          # We are saying we have loaded the thimble queue and now we will only drain this
-          close()
-          if batch.size > 0
-            @batches.push(batch)
-          end
-        else
+    puts "batching"
+    while batch = getBatch
+      p batch
+      if batch.item.size < @context.batchSize
+        if batch.item.size > 0
           @batches.push(batch)
         end
+      else
+        @batches.push(batch)
       end
-      @batches.close()
     end
+    @batches.close()
+    puts "done batching"
   end
 
   # Will perform anything handed to this asynchronously. 
@@ -105,6 +103,7 @@ class Thimble < ThimbleQueue
     batch = []
     while batch.size < @context.batchSize
       item = take
+      p item
       if item.nil?
         return batch
       else
@@ -116,7 +115,7 @@ class Thimble < ThimbleQueue
 
 end
 
-t = Thimble.new((1..20000).to_a)
+t = Thimble.new((1..20).to_a)
 res = t.process {|i| i + 1}
 
 p res

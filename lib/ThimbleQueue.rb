@@ -18,10 +18,13 @@ class ThimbleQueue
     @mutex.synchronize  do
       while !@closeNow
         a = @queue.shift
-        unless a.nil?
+        p a
+        if !a.nil?
           @full.broadcast
+          puts "not nil #{a}"
           return a
         else 
+          puts "in nil"
           return nil if @closed
           @empty.wait(@mutex)
         end
@@ -43,8 +46,13 @@ class ThimbleQueue
   end
 
   def close(now = false)
-    @close = true
-    @closeNow = true if now
+    @mutex.synchronize do
+      puts "Closing Queue!"
+      @close = true
+      @closeNow = true if now
+      @full.broadcast
+      @empty.broadcast
+    end
   end
 
   def closed?
