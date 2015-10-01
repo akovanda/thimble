@@ -3,8 +3,9 @@ require_relative 'QueueItem'
 
 class ThimbleQueue
   attr_reader :size
-  def initialize(size)
+  def initialize(size, name)
     raise ArgumentError.new("make sure there is a size for the queue greater than 1! size received #{size}") unless size >= 1
+    @name = name
     @size = size
     @mutex = Mutex.new
     @queue = []
@@ -18,13 +19,10 @@ class ThimbleQueue
     @mutex.synchronize  do
       while !@closeNow
         a = @queue.shift
-        p a
         if !a.nil?
           @full.broadcast
-          puts "not nil #{a}"
           return a
         else 
-          puts "in nil"
           return nil if @closed
           @empty.wait(@mutex)
         end
@@ -47,12 +45,19 @@ class ThimbleQueue
 
   def close(now = false)
     @mutex.synchronize do
-      puts "Closing Queue!"
-      @close = true
+      @closed = true
       @closeNow = true if now
       @full.broadcast
       @empty.broadcast
     end
+  end
+
+  def to_a
+    a = []
+    while item = take
+      a << item.item
+    end
+    a
   end
 
   def closed?
