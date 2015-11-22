@@ -33,19 +33,19 @@ class Thimble < ThimbleQueue
     super(array.size, "Main")
     push(array)
     close()
-    batchWork
   end
 
   # Takes a block
-  def process
+  def parMap
     running = true
     while running
-      while (@currentPids.size<@context.pids && batch = @batches.take)
-        @currentPids << newPid(batch, &Proc.new)
+      while (@currentPids.size<@context.pids && batch = getBatch)
+          @currentPids << newPid(batch, &Proc.new)
       end
       @currentPids.each do |tup|
         while tup.reader.ready?
-          @result.push(Marshal.load(tup.reader.gets))
+          t = tup.reader.read
+          @result.push(Marshal.load(t))
           @currentPids.delete(tup)
         end
       end
@@ -63,9 +63,10 @@ class Thimble < ThimbleQueue
     tup = OpenStruct.new
     pid = fork do
       rd.close 
-      batch.item.item.each do |item|
-        wr.puts Marshal.dump(yield (item.item))
-      end
+      t = Marshal.dump(batch.item.map do |item|
+        yield (item.item)
+      end)
+      wr.write(t)
       wr.close
     end
     wr.close
@@ -74,6 +75,7 @@ class Thimble < ThimbleQueue
     tup
   end
 
+=begin
   # We will prep as many batches as the context allows
   def batchWork
     while batch = getBatch
@@ -88,6 +90,7 @@ class Thimble < ThimbleQueue
     end
     @batches.close()
   end
+=end
 
   # Will perform anything handed to this asynchronously. 
   # Requires a block
@@ -113,11 +116,11 @@ class Thimble < ThimbleQueue
   end
 
 end
-
-t = Thimble.new((1..200).to_a)
-res = t.process {|i| i + 1}
-
-p res.to_a
-
+c = Context.new(pids: 20, batchSize: 20, queueSize: 10)
+t = Thimble.new((1..100).to_a, c)
+res = t.parMap do |i| 
+  i * 1000
+end
+p res.to_a.sort
 
 
