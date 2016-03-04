@@ -6,8 +6,6 @@ class ThimbleManager
     raise "maxWorkers must be greater than 0" if maxWorkers < 1
     raise "batch size must be greater than 0" if batchSize < 1
     @workerType = workerType
-    puts workerType
-    puts @workerType
     @maxWorkers = maxWorkers
     @batchSize = batchSize
     @queueSize = queueSize
@@ -41,41 +39,14 @@ class ThimbleManager
   end
 
   def getThreadWorker(batch)
-    thread = Thread.new do
-      batch.item.map do |item|
+    tup = OpenStruct.new
+    tup.pid = Thread.new do
+      tup.result = batch.item.map do |item|
         yield item.item
       end
+      tup.done = true
     end
-  end
-
-  def manageWork(batches)
-    if @workerType == :thread
-      manageThreadWork(batches)
-    else
-      manageForkWork(batches)
-    end
-  end
-
-  def createWorkers(batch)
-    
-  end
-
-  def manageThreadWork(batches)
-    
-  end
-
-  def manageForkWork(batches)
-    while (@currentWorkers.size < @maxWorkers && batch = getBatch)
-      @currentWorkers << getWorker(batch, &Proc.new)
-    end
-      @currentWorkers.each do |tup|
-        while tup.reader.ready?
-          t = tup.reader.read
-          @result.push(Marshal.load(t))
-          Process.kill("HUP", tup.pid)
-          @currentWorkers.delete(tup)
-        end
-      end
+    tup
   end
 
   def self.deterministic

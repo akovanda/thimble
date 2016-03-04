@@ -42,14 +42,9 @@ class Thimble < ThimbleQueue
         @currentPids << @manager.getWorker(batch, &Proc.new)
       end
       @currentPids.each do |tup|
-        while tup.reader.ready?
-          t = tup.reader.read
-          @result.push(Marshal.load(t))
-          Process.kill("HUP", tup.pid)
-          @currentPids.delete(tup)
-        end
+        getResult(tup)
       end
-      running = false if @currentPids.size == 0
+      running = false if @currentPids.size == 0 && !batch
     end
     @result.close()
     @result
@@ -76,6 +71,22 @@ class Thimble < ThimbleQueue
       end
     end
     QueueItem.new(batch, "Batch")
+  end
+
+  def getResult(tuple)
+    if @manager.workerType == :fork
+      if tuple.reader.ready?
+        pipedResult = tuple.reader.read
+        @result.push(Marshal.load(pipedResult))
+        Process.kill("HUP", tuple.pid)
+        @currentPids.delete(tuple) 
+      end
+    else
+      if tuple.done == true
+        @result.push(tuple.result)
+        @currentPids.delete(tuple)  
+      end
+    end
   end
 
 end
