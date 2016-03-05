@@ -1,5 +1,5 @@
 class ThimbleManager
-  attr_reader :maxWorkers, :batchSize, :queueSize, :workerType
+  attr_reader :maxWorkers, :batchSize, :queueSize, :workerType, :currentWorkers
   def initialize(maxWorkers: 6,batchSize: 1000, queueSize: 1000, workerType: :fork)
     raise "worker type must be either :fork or :thread" unless workerType == :thread || workerType == :fork
     raise "Your system does not respond to fork please use threads." unless workerType == :thread || Process.respond_to?(:fork)
@@ -10,6 +10,23 @@ class ThimbleManager
     @batchSize = batchSize
     @queueSize = queueSize
     @currentWorkers = []
+  end
+
+  def workerAvailable?
+    @currentWorkers.size < @maxWorkers
+  end
+
+  def working?
+    @currentWorkers.size > 0
+  end
+
+  def subWorker(worker)
+    raise "Worker must contain a pid!" if worker.pid.nil?
+    @currentWorkers << worker
+  end
+
+  def remWorker(worker)
+    @currentWorkers.delete(worker)
   end
 
   def getWorker (batch)
