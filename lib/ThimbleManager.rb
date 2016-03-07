@@ -12,7 +12,7 @@ class ThimbleManager
     @current_workers = []
   end
 
-  def workerAvailable?
+  def worker_available?
     @current_workers.size < @max_workers
   end
 

@@ -34,7 +34,7 @@ class Thimble < ThimbleQueue
   end
 
   # Takes a block
-  def parMap
+  def par_map
     @running = true
     while @running
       manage_workers &Proc.new
@@ -45,14 +45,14 @@ class Thimble < ThimbleQueue
 
   # Will perform anything handed to this asynchronously. 
   # Requires a block
-  def aSync
+  def a_sync
     Thread.new do |e|
       yield e
     end
   end
 
   private
-  def getBatch
+  def get_batch
     batch = []
     while batch.size < @manager.batch_size
       item = take
@@ -67,16 +67,16 @@ class Thimble < ThimbleQueue
   end
 
   def manage_workers
-    while (@manager.workerAvailable? && batch = getBatch)
+    while (@manager.worker_available? && batch = get_batch)
       @manager.sub_worker( @manager.get_worker(batch, &Proc.new) )
     end
     @manager.current_workers.each do |tup|
-      getResult(tup)
+      get_result(tup)
     end
     @running = false if !@manager.working? && !batch
   end
 
-  def getResult(tuple)
+  def get_result(tuple)
     if @manager.worker_type == :fork
       if tuple.reader.ready?
         piped_result = tuple.reader.read
