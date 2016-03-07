@@ -1,10 +1,10 @@
 class ThimbleManager
   attr_reader :maxWorkers, :batchSize, :queueSize, :workerType, :currentWorkers
   def initialize(maxWorkers: 6,batchSize: 1000, queueSize: 1000, workerType: :fork)
-    raise "worker type must be either :fork or :thread" unless workerType == :thread || workerType == :fork
-    raise "Your system does not respond to fork please use threads." unless workerType == :thread || Process.respond_to?(:fork)
-    raise "maxWorkers must be greater than 0" if maxWorkers < 1
-    raise "batch size must be greater than 0" if batchSize < 1
+    raise ArgumentError.new ("worker type must be either :fork or :thread") unless workerType == :thread || workerType == :fork
+    raise ArgumentError.new ("Your system does not respond to fork please use threads.") unless workerType == :thread || Process.respond_to?(:fork)
+    raise ArgumentError.new ("maxWorkers must be greater than 0") if maxWorkers < 1
+    raise ArgumentError.new ("batch size must be greater than 0") if batchSize < 1
     @workerType = workerType
     @maxWorkers = maxWorkers
     @batchSize = batchSize

@@ -23,8 +23,8 @@ end
 
 class Thimble < ThimbleQueue
   def initialize(array, manager = ThimbleManager.new)
-    raise "You need to pass a manager to Thimble!" unless manager.class == ThimbleManager
-    raise "There needs to be an iterable object passed to Thimble to start." unless array.respond_to? :each
+    raise ArgumentError.new ("You need to pass a manager to Thimble!") unless manager.class == ThimbleManager
+    raise ArgumentError.new ("There needs to be an iterable object passed to Thimble to start.") unless array.respond_to? :each
     @manager = manager
     @result = ThimbleQueue.new(array.size, "Result")
     @running = true
