@@ -37,7 +37,7 @@ class Thimble < ThimbleQueue
   def parMap
     @running = true
     while @running
-      manageWorkers &Proc.new
+      manage_workers &Proc.new
     end
     @result.close()
     @result
@@ -54,7 +54,7 @@ class Thimble < ThimbleQueue
   private
   def getBatch
     batch = []
-    while batch.size < @manager.batchSize
+    while batch.size < @manager.batch_size
       item = take
       if item.nil?
         return nil if batch.size == 0
@@ -66,28 +66,28 @@ class Thimble < ThimbleQueue
     QueueItem.new(batch, "Batch")
   end
 
-  def manageWorkers
+  def manage_workers
     while (@manager.workerAvailable? && batch = getBatch)
-      @manager.subWorker( @manager.getWorker(batch, &Proc.new) )
+      @manager.sub_worker( @manager.get_worker(batch, &Proc.new) )
     end
-    @manager.currentWorkers.each do |tup|
+    @manager.current_workers.each do |tup|
       getResult(tup)
     end
     @running = false if !@manager.working? && !batch
   end
 
   def getResult(tuple)
-    if @manager.workerType == :fork
+    if @manager.worker_type == :fork
       if tuple.reader.ready?
-        pipedResult = tuple.reader.read
-        @result.push(Marshal.load(pipedResult))
+        piped_result = tuple.reader.read
+        @result.push(Marshal.load(piped_result))
         Process.kill("HUP", tuple.pid)
-        @manager.remWorker(tuple)
+        @manager.rem_worker(tuple)
       end
     else
       if tuple.done == true
         @result.push(tuple.result)
-        @manager.remWorker(tuple)
+        @manager.rem_worker(tuple)
       end
     end
   end
