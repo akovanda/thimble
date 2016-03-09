@@ -1,6 +1,6 @@
 module Thimble
-  class ThimbleManager
-    attr_reader :max_workers, :batch_size, :queue_size, :worker_type, :current_workers
+  class Manager
+    attr_reader :max_workers, :batch_size, :queue_size, :worker_type
     def initialize(max_workers: 6,batch_size: 1000, queue_size: 1000, worker_type: :fork)
       raise ArgumentError.new ("worker type must be either :fork or :thread") unless worker_type == :thread || worker_type == :fork
       raise ArgumentError.new ("Your system does not respond to fork please use threads.") unless worker_type == :thread || Process.respond_to?(:fork)
@@ -10,7 +10,7 @@ module Thimble
       @max_workers = max_workers
       @batch_size = batch_size
       @queue_size = queue_size
-      @current_workers = []
+      @current_workers = {}
     end
 
     def worker_available?
@@ -21,13 +21,20 @@ module Thimble
       @current_workers.size > 0
     end
 
-    def sub_worker(worker)
+    def sub_worker(worker, id)
       raise "Worker must contain a pid!" if worker.pid.nil?
-      @current_workers << worker
+      new_worker = OpenStruct.new
+      new_worker.worker = worker
+      new_worker.id = id
+      @current_workers[worker.pid] = new_worker
     end
 
     def rem_worker(worker)
-      @current_workers.delete(worker)
+      @current_workers.delete(worker.pid)
+    end
+
+    def current_workers(id)
+      @current_workers.select { |k,v| v.id == id }
     end
 
     def get_worker (batch)

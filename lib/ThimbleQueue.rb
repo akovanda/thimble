@@ -6,6 +6,7 @@ module Thimble
     attr_reader :size
     def initialize(size, name)
       raise ArgumentError.new("make sure there is a size for the queue greater than 1! size received #{size}") unless size >= 1
+      @id = Digest::SHA256.digest(rand(10**100).to_s + Time.now.to_i.to_s)
       @name = name
       @size = size
       @mutex = Mutex.new

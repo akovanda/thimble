@@ -3,7 +3,7 @@ require 'Thimble'
 RSpec.describe Thimble, "Thimble" do 
   context "map" do
     it "returns results correctly with fork" do
-      c = Thimble::ThimbleManager.new(max_workers: 20, batch_size: 20, queue_size: 10)
+      c = Thimble::Manager.new(max_workers: 20, batch_size: 20, queue_size: 10)
       t = Thimble::Thimble.new((1..100).to_a, c)
       res = t.par_map do |i|
         i * 1000
@@ -13,7 +13,7 @@ RSpec.describe Thimble, "Thimble" do
     end
 
     it "returns results correcly with thread" do 
-      c = Thimble::ThimbleManager.new(max_workers: 20, batch_size: 20, queue_size: 10, worker_type: :thread)
+      c = Thimble::Manager.new(max_workers: 20, batch_size: 20, queue_size: 10, worker_type: :thread)
       t = Thimble::Thimble.new((1..100).to_a, c)
       res = t.par_map do |i|
         i * 1000

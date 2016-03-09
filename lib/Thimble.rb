@@ -1,5 +1,5 @@
 
-require_relative 'ThimbleManager'
+require_relative 'Manager'
 require_relative 'ThimbleQueue'
 require_relative 'QueueItem'
 require 'io/wait'
@@ -8,8 +8,8 @@ require 'ostruct'
 module Thimble
 
   class Thimble < ThimbleQueue
-    def initialize(array, manager = ThimbleManager.new)
-      raise ArgumentError.new ("You need to pass a manager to Thimble!") unless manager.class == ThimbleManager
+    def initialize(array, manager = Manager.new)
+      raise ArgumentError.new ("You need to pass a manager to Thimble!") unless manager.class == Manager
       raise ArgumentError.new ("There needs to be an iterable object passed to Thimble to start.") unless array.respond_to? :each
       @manager = manager
       @result = ThimbleQueue.new(array.size, "Result")
@@ -54,10 +54,10 @@ module Thimble
 
     def manage_workers
       while (@manager.worker_available? && batch = get_batch)
-        @manager.sub_worker( @manager.get_worker(batch, &Proc.new) )
+        @manager.sub_worker( @manager.get_worker(batch, &Proc.new), @id)
       end
-      @manager.current_workers.each do |tup|
-        get_result(tup)
+      @manager.current_workers(@id).each do |pid, pair|
+        get_result(pair.worker)
       end
       @running = false if !@manager.working? && !batch
     end
@@ -79,7 +79,7 @@ module Thimble
     end
 
     def push_result(result)
-        @result.push_flat(result)
+      @result.push_flat(result)
     end
   end
 end
