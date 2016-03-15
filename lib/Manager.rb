@@ -10,6 +10,7 @@ module Thimble
       @max_workers = max_workers
       @batch_size = batch_size
       @queue_size = queue_size
+      @mutex = Mutex.new
       @current_workers = {}
     end
 
@@ -26,22 +27,30 @@ module Thimble
       new_worker = OpenStruct.new
       new_worker.worker = worker
       new_worker.id = id
-      @current_workers[worker.pid] = new_worker
+      @mutex.synchronize do
+        @current_workers[worker.pid] = new_worker
+      end
     end
 
     def rem_worker(worker)
-      @current_workers.delete(worker.pid)
+      @mutex.synchronize do
+        @current_workers.delete(worker.pid)
+      end
     end
 
     def current_workers(id)
-      @current_workers.select { |k,v| v.id == id }
+      @mutex.synchronize do
+        @current_workers.select { |k,v| v.id == id }
+      end
     end
 
     def get_worker (batch)
-      if @worker_type == :fork
-        get_fork_worker(batch, &Proc.new)    
-      else
-        get_thread_worker(batch, &Proc.new)
+      @mutex.synchronize do
+        if @worker_type == :fork
+          get_fork_worker(batch, &Proc.new)    
+        else
+          get_thread_worker(batch, &Proc.new)
+        end
       end
     end
 

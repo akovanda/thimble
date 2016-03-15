@@ -31,7 +31,7 @@ module Thimble
 
     # Will perform anything handed to this asynchronously. 
     # Requires a block
-    def a_sync
+    def self.a_sync
       Thread.new do |e|
         yield e
       end
