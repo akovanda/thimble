@@ -1,5 +1,5 @@
 # Thimble
-Thimble is a ruby gem for pararrelism and conconcurrency.  It allows you to decide if you want to use separate processes, or if you want to use threads in ruby.  
+Thimble is a ruby gem for parallelism and concurrency.  It allows you to decide if you want to use separate processes, or if you want to use threads in ruby.  
 ____
 ### Example
 ```
