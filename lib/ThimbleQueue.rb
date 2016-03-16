@@ -17,7 +17,7 @@ module Thimble
       @full = ConditionVariable.new
     end
    
-    def take
+    def first
       @mutex.synchronize  do
         while !@close_now
           a = @queue.shift
@@ -68,7 +68,7 @@ module Thimble
 
     def to_a
       a = []
-      while item = take
+      while item = first
         a << item.item
       end
       a

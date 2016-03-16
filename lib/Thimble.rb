@@ -19,7 +19,7 @@ module Thimble
       close()
     end
 
-    # Takes a block
+    # firsts a block
     def par_map
       @running = true
       while @running
@@ -41,7 +41,7 @@ module Thimble
     def get_batch
       batch = []
       while batch.size < @manager.batch_size
-        item = take
+        item = first
         if item.nil?
           return nil if batch.size == 0
           return QueueItem.new(batch, "Batch")
