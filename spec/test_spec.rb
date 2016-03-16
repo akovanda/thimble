@@ -43,5 +43,17 @@ RSpec.describe Thimble, "Thimble" do
       expect(res1.to_a.sort).to eq result
       expect(res2.to_a.sort).to eq result
     end
+
+    it "should preserve arrays of arrays" do
+      c = Thimble::Manager.new(max_workers: 5, batch_size: 1, queue_size: 10, worker_type: :fork)
+      innerArray = [1,2,3,4,5]
+      array = [innerArray.dup, innerArray.dup, innerArray.dup]
+      t = Thimble::Thimble.new(array, c)
+      res = t.par_map do |i|
+        i.map {|e| e * 1000 }
+      end
+      resInner = innerArray.map { |e| e * 1000 }
+      expect(res.to_a.sort).to eq [resInner, resInner, resInner]
+    end
   end
 end

@@ -79,7 +79,11 @@ module Thimble
     end
 
     def push_result(result)
-      @result.push_flat(result)
+      if result.respond_to? :each
+        result.each {|r| @result.push(r)}
+      else
+        @result.push(result)
+      end
     end
   end
 end
