@@ -3,6 +3,7 @@ require_relative 'QueueItem'
 
 module Thimble
   class ThimbleQueue
+    include Enumerable
     attr_reader :size
     def initialize(size, name)
       raise ArgumentError.new("make sure there is a size for the queue greater than 1! size received #{size}") unless size >= 1
@@ -15,6 +16,12 @@ module Thimble
       @close_now = false
       @empty = ConditionVariable.new
       @full = ConditionVariable.new
+    end
+
+    def each
+      while item = self.next
+        yield item.item
+      end
     end
    
     def next
@@ -68,7 +75,7 @@ module Thimble
 
     def to_a
       a = []
-      while item = next
+      while item = self.next
         a << item.item
       end
       a

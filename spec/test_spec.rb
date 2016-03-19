@@ -55,5 +55,19 @@ RSpec.describe Thimble, "Thimble" do
       resInner = innerArray.map { |e| e * 1000 }
       expect(res.to_a.sort).to eq [resInner, resInner, resInner]
     end
+
+    it "handle the exception and raise it to the user" do
+      c = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :fork)
+      t1 = Thimble::Thimble.new((1..100).to_a, c)
+
+      expect{t1.par_map {|r| r.count }.to_a.reduce(:+)}.to raise_exception(NoMethodError)
+    end
+
+    it "should convert to array properly" do
+      c = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :fork)
+      t1 = Thimble::Thimble.new((1..100).to_a, c)
+
+      t1.par_map {|r| r }.reduce(:+)
+    end
   end
 end

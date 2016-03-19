@@ -19,7 +19,7 @@ module Thimble
       close()
     end
 
-    # nexts a block
+    # requires a block
     def par_map
       @running = true
       while @running
@@ -41,7 +41,7 @@ module Thimble
     def get_batch
       batch = []
       while batch.size < @manager.batch_size
-        item = next
+        item = self.next
         if item.nil?
           return nil if batch.size == 0
           return QueueItem.new(batch, "Batch")
@@ -66,7 +66,9 @@ module Thimble
       if @manager.worker_type == :fork
         if tuple.reader.ready?
           piped_result = tuple.reader.read
-          push_result(Marshal.load(piped_result))
+          loadedResult = Marshal.load(piped_result)
+          loadedResult.each { |r| raise r if r.class <= Exception }
+          push_result(loadedResult)
           Process.kill("HUP", tuple.pid)
           @manager.rem_worker(tuple)
         end

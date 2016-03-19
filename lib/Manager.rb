@@ -61,7 +61,11 @@ module Thimble
         Signal.trap("HUP") {exit}
         rd.close 
         t = Marshal.dump(batch.item.map do |item|
-          yield (item.item)
+          begin
+            yield (item.item)
+          rescue Exception => e
+            e
+          end
         end)
         wr.write(t)
         wr.close
