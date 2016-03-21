@@ -6,7 +6,7 @@ RSpec.describe Thimble, "Thimble" do
     it "returns results correctly with fork" do
       c = Thimble::Manager.new(max_workers: 20, batch_size: 20, queue_size: 10)
       t = Thimble::Thimble.new((1..100).to_a, c)
-      res = t.par_map do |i|
+      res = t.map do |i|
         i * 1000
       end
       expect(res.to_a.sort).to eq result
@@ -16,7 +16,7 @@ RSpec.describe Thimble, "Thimble" do
     it "returns results correcly with thread" do 
       c = Thimble::Manager.new(max_workers: 20, batch_size: 20, queue_size: 10, worker_type: :thread)
       t = Thimble::Thimble.new((1..100).to_a, c)
-      res = t.par_map do |i|
+      res = t.map do |i|
         i * 1000
       end
       expect(res.to_a.sort).to eq result
@@ -28,13 +28,13 @@ RSpec.describe Thimble, "Thimble" do
       t2 = Thimble::Thimble.new((1..100).to_a, c)
       res1 = nil
       thread1 = Thimble::Thimble.a_sync do 
-        res1 = t1.par_map do |i|
+        res1 = t1.map do |i|
           i * 1000
         end
       end
       res2 = nil
       thread2 = Thimble::Thimble.a_sync do
-        res2 = t2.par_map do |i|
+        res2 = t2.map do |i|
           i * 1000
         end
       end
@@ -49,7 +49,7 @@ RSpec.describe Thimble, "Thimble" do
       innerArray = [1,2,3,4,5]
       array = [innerArray.dup, innerArray.dup, innerArray.dup]
       t = Thimble::Thimble.new(array, c)
-      res = t.par_map do |i|
+      res = t.map do |i|
         i.map {|e| e * 1000 }
       end
       resInner = innerArray.map { |e| e * 1000 }
@@ -60,14 +60,15 @@ RSpec.describe Thimble, "Thimble" do
       c = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :fork)
       t1 = Thimble::Thimble.new((1..100).to_a, c)
 
-      expect{t1.par_map {|r| r.count }.to_a.reduce(:+)}.to raise_exception(NoMethodError)
+      expect{t1.map {|r| r.count }.to_a.reduce(:+)}.to raise_exception(NoMethodError)
     end
 
     it "should convert to array properly" do
       c = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :fork)
       t1 = Thimble::Thimble.new((1..100).to_a, c)
-
-      t1.par_map {|r| r }.reduce(:+)
+      res = t1.map {|r| r }.reduce(:+)
+      expect(res).to eq 5050
     end
+
   end
 end
