@@ -41,6 +41,7 @@ module Thimble
 
     # This will push whatever it is handed to the queue
     def push(x)
+      raise "Queue is closed!" if @closed
       @mutex.synchronize do
         while !offer(x)
           @full.wait(@mutex)
@@ -52,6 +53,7 @@ module Thimble
     # This will flatten any nested arrays out and feed them one at
     # a time to the queue.
     def push_flat(x)
+      raise "Queue is closed!" if @closed
       if x.respond_to? :each
         x.each {|item| push(item)}
       else

@@ -19,8 +19,10 @@ module Thimble
       close()
     end
 
-    # requires a block
-    def par_map
+    # This will use the manager and tranform your thimble queue.
+    # requires a block 
+    # returns a new ThimbleQueue
+    def map
       @running = true
       while @running
         manage_workers &Proc.new
