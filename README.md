@@ -7,7 +7,7 @@ ____
     
   manager = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :fork)
   thimble = Thimble::Thimble.new((1..100).to_a, manager)
-  results = thimble.par_map do |x|
+  results = thimble.map do |x|
     x * 1000
   end 
 ```
