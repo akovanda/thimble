@@ -52,7 +52,38 @@ queue.close
 # join the thread
 thread.join
 ```
+#### Manager Example
+```
+	m = Thimble::Manager.new(max_workers: 10, batch_size: 100, worker_type: :fork)
+	Thimble::Thimble.new(array, m)
 
-You must pass an explicit manager to your thimble.  They can be used in multiple thimbles at the same time.  
+```
+The manager uses three variables.
+* max_workers.  This tells the manager how many workers are allowed to be running at the same time.
+* batch_size. This tells the thimble manager how many items to send to each worker.  This should be tuned for job performance.
+* worker_type. Two options here :thread, or :fork.  This tells thimble how to do your work.  Choose wisely here.
 
-batch_size is how many chunks of work you will send with the worker.
+The manager can be used in multiple thimbles at the same time, so you can share resources to prevent to many workers in multiple stages from going at the same time.  
+
+All thimbles require an explicit manager.  
+____
+
+#### ThimbleQueue
+ This is the underlying queue that thimble is using.  Taking from it is DESTRUCTIVE.  It is designed to be thread safe, so you can use threads and push and pull data from it.  
+
+ ```
+  q = Thimble::ThimbleQueue.new(size: 10, "name")
+
+  # THIS WILL NEVER END.  
+  # The queue is "open"
+  #q.each {|x| puts x}
+
+  q.push(1)
+
+  q.close
+
+  q.each {|x| puts x}
+  # => 1
+
+ ```
+ If you do not close the queue will wait for more data to come in.  When you create a thimble you are creating a "closed" queue any transformations will create a NEW Queue
