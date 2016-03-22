@@ -1,7 +1,7 @@
 Gem::Specification.new do |s|
   s.name        = 'thimble'
-  s.version     = '0.0.4'
-  s.date        = '2016-03-19'
+  s.version     = '0.0.5'
+  s.date        = '2016-03-21'
   s.summary     = "Concurrency and Parallelism gem that uses blocks to move data"
   s.description = "Pass a block and get some results"
   s.authors     = ["Andrew Kovanda"]
