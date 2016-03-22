@@ -63,7 +63,7 @@ The manager uses three variables.
 * batch_size. This tells the thimble manager how many items to send to each worker.  This should be tuned for job performance.
 * worker_type. Two options here :thread, or :fork.  This tells thimble how to do your work.  Choose wisely here.
 
-The manager can be used in multiple thimbles at the same time, so you can share resources to prevent to many workers in multiple stages from going at the same time.  
+The manager can be used in multiple thimbles at the same time, so you can share resources to prevent too many workers from going at the same time in multiple thimbles.  
 
 All thimbles require an explicit manager.  
 ____
