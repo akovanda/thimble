@@ -25,7 +25,7 @@ thread = Thimble::Thimble.a_sync do
 end
 # Our Thimble, plus it's manager.  Note we are using Thread in this example.
 thim = Thimble::Thimble.new(ary, Thimble::Manager.new(batch_size: 1, worker_type: :thread))
-# We in parallel push data to the thimble array
+# We in parallel push data to the Thimble Queue
 thim.map { |e| queue.push(e); sleep 3; puts "I pushed #{e} to the queue!" }
 #I pushed 1 to the queue!
 #I did work on 1!
