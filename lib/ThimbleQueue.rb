@@ -23,7 +23,19 @@ module Thimble
         yield item.item
       end
     end
-   
+
+    def length
+      size
+    end
+
+    def +(other)
+      raise ArgumentError.new("+ requires another Enumerable!") unless other.class < Enumerable
+      merged_thimble = ThimbleQueue.new(length + other.length, @name)
+      self.each {|item| merged_thimble.push(item)}
+      other.each {|item| merged_thimble.push(item)}
+      merged_thimble
+    end
+
     def next
       @mutex.synchronize  do
         while !@close_now
@@ -41,7 +53,7 @@ module Thimble
 
     # This will push whatever it is handed to the queue
     def push(x)
-      raise "Queue is closed!" if @closed
+      raise RuntimeError.new("Queue is closed!") if @closed
       @mutex.synchronize do
         while !offer(x)
           @full.wait(@mutex)
@@ -53,7 +65,7 @@ module Thimble
     # This will flatten any nested arrays out and feed them one at
     # a time to the queue.
     def push_flat(x)
-      raise "Queue is closed!" if @closed
+      raise RuntimeError.new("Queue is closed!") if @closed
       if x.respond_to? :each
         x.each {|item| push(item)}
       else
