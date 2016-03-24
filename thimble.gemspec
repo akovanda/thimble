@@ -1,9 +1,9 @@
 Gem::Specification.new do |s|
   s.name        = 'thimble'
-  s.version     = '0.0.5'
-  s.date        = '2016-03-21'
+  s.version     = '0.0.6'
+  s.date        = '2016-03-23'
   s.summary     = "Concurrency and Parallelism gem that uses blocks to move data"
-  s.description = "Pass a block and get some results"
+  s.description = "Thimble is a ruby gem for parallelism and concurrency. It allows you to decide if you want to use separate processes, or if you want to use threads in ruby. It allows you to create stages with a thread safe queue, and break apart large chunks of work."
   s.authors     = ["Andrew Kovanda"]
   s.email       = 'andrew.kovanda@gmail.com'
   s.files       = `git ls-files lib MIT-LICENSE.txt`.split("\n")
