@@ -21,7 +21,7 @@ module Thimble
 
     # This will use the manager and tranform your thimble queue.
     # requires a block 
-    # returns a new ThimbleQueue
+    # @return [ThimbleQueue]
     def map
       @running = true
       while @running
@@ -33,6 +33,7 @@ module Thimble
 
     # Will perform anything handed to this asynchronously. 
     # Requires a block
+    # @return [Thread]
     def self.a_sync
       Thread.new do |e|
         yield e

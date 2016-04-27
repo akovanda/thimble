@@ -24,10 +24,15 @@ module Thimble
       end
     end
 
+    # Returns the size of the ThimbleQueue
+    # @return [Fixnum]
     def length
       size
     end
 
+    # Will concatenate an enumerable to the ThimbleQueue
+    # @param [Enumerable]
+    # @return [ThimbleQueue]
     def +(other)
       raise ArgumentError.new("+ requires another Enumerable!") unless other.class < Enumerable
       merged_thimble = ThimbleQueue.new(length + other.length, @name)
@@ -36,6 +41,8 @@ module Thimble
       merged_thimble
     end
 
+    # Returns the first item in the queue
+    # @return [Object]
     def next
       @mutex.synchronize  do
         while !@close_now
@@ -52,6 +59,7 @@ module Thimble
     end
 
     # This will push whatever it is handed to the queue
+    # @param [Object]
     def push(x)
       raise RuntimeError.new("Queue is closed!") if @closed
       @mutex.synchronize do
@@ -64,6 +72,8 @@ module Thimble
 
     # This will flatten any nested arrays out and feed them one at
     # a time to the queue.
+    # @param [Object, Enumerable]
+    # @return [nil]
     def push_flat(x)
       raise RuntimeError.new("Queue is closed!") if @closed
       if x.respond_to? :each
@@ -78,7 +88,11 @@ module Thimble
       end
     end
 
+    # Closes the ThibleQueue
+    # @param [TrueClass, FalseClass]
+    # @return [nil]
     def close(now = false)
+      raise ArgumentError.new("now must be true or false") unless (now == true || now == false)
       @mutex.synchronize do
         @closed = true
         @close_now = true if now
@@ -87,6 +101,8 @@ module Thimble
       end
     end
 
+    # Will force the ThimbleQueue into an array
+    # @return [Array[Object]]
     def to_a
       a = []
       while item = self.next
@@ -95,6 +111,8 @@ module Thimble
       a
     end
 
+    # checks if the ThimbleQueue is closed
+    # @return [TrueClass, FalseClass]
     def closed?
       @close
     end
