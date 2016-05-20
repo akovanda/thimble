@@ -12,7 +12,7 @@ RSpec.describe Thimble::ThimbleQueue, "thimblequeue" do
     it "should not accept more items than the given size" do
       ary = [1,2,3,4,5,6,7,8,9,10]
       q1 = Thimble::ThimbleQueue.new(5, "1")
-      Thimble::Thimble.a_sync do 
+      Thimble::Thimble.async do 
         ary.each{ q1.push(ary.shift)}
       end
       sleep 1

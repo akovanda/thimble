@@ -9,7 +9,7 @@ module Thimble
     end
 
     def to_s
-      "#{@name}: #{@item} \nID: #{@id}"
+      "#{@name}: #{@item} ID: #{@id}"
     end
 
   end

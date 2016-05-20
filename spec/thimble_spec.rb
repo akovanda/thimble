@@ -27,13 +27,13 @@ RSpec.describe Thimble, "Thimble" do
       t1 = Thimble::Thimble.new((1..100).to_a, c)
       t2 = Thimble::Thimble.new((1..100).to_a, c)
       res1 = nil
-      thread1 = Thimble::Thimble.a_sync do 
+      thread1 = Thimble::Thimble.async do 
         res1 = t1.map do |i|
           i * 1000
         end
       end
       res2 = nil
-      thread2 = Thimble::Thimble.a_sync do
+      thread2 = Thimble::Thimble.async do
         res2 = t2.map do |i|
           i * 1000
         end
@@ -68,6 +68,30 @@ RSpec.describe Thimble, "Thimble" do
       t1 = Thimble::Thimble.new((1..100).to_a, c)
       res = t1.map {|r| r }.reduce(:+)
       expect(res).to eq 5050
+    end
+
+    it "should perform map asynchronously with thread" do
+      c = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :thread)
+      rq = Thimble::ThimbleQueue.new(10, "result queue")
+      t1 = Thimble::Thimble.new((1..100).to_a, c, rq)
+      res = t1.map_async {|r| r}
+      expect(res.closed?).to eq false
+      ta = res.to_a
+      expect(ta.sort).to eq ((1..100).to_a)
+      expect(res.closed?).to eq true
+
+    end
+
+    it "should perform map asynchronously with fork" do
+      c1 = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :fork)
+      rq = Thimble::ThimbleQueue.new(10, "result queue")
+      t1 = Thimble::Thimble.new((1..100).to_a, c1, rq)
+      res = t1.map_async {|r| r}
+      expect(res.closed?).to eq false
+      ta = res.to_a
+      expect(ta).to eq ((1..100).to_a)
+      expect(res.closed?).to eq true
+
     end
   end
 end

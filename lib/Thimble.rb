@@ -8,33 +8,56 @@ require 'ostruct'
 module Thimble
 
   class Thimble < ThimbleQueue
-    def initialize(array, manager = Manager.new)
+    def initialize(array, manager = Manager.new, result = nil, name = "Main")
       raise ArgumentError.new ("You need to pass a manager to Thimble!") unless manager.class == Manager
       raise ArgumentError.new ("There needs to be an iterable object passed to Thimble to start.") unless array.respond_to? :each
+      @result = if result.nil?
+        ThimbleQueue.new(array.size, "Result")
+      else
+        result
+      end
+      raise ArgumentError.new ("result needs to be an open ThimbleQueue") unless (@result.class == ThimbleQueue && !@result.closed?)
       @manager = manager
-      @result = ThimbleQueue.new(array.size, "Result")
       @running = true
-      super(array.size, "Main")
+      super(array.size, name)
+      @logger.debug("loading thimble #{name}")
       array.each {|item| push(item)}
+      @logger.debug("finished loading thimble #{name}")
       close()
     end
 
-    # This will use the manager and tranform your thimble queue.
+    # This will use the manager and transform your thimble queue.
     # requires a block 
     # @return [ThimbleQueue]
     def map
+      @logger.debug("starting map in #{@name} with id #{Thread.current.object_id}")
       @running = true
       while @running
         manage_workers &Proc.new
       end
       @result.close()
+      @logger.debug("finishing map in #{@name} with id #{Thread.current.object_id}")
+      @result
+    end
+
+    # This will use the manager and transform the thimble queue asynchronously.
+    # Will return the result instantly, so you can use it for next stage processing.
+    # requires a block
+    # @return [ThimbleQueue]
+    def map_async
+      @logger.debug("starting async map in #{@name} with id #{Thread.current.object_id}")
+      @logger.debug("queue: #{@queue}")
+      Thimble.async do
+        map &Proc.new
+      end
+      @logger.debug("finished async map in #{@name} with id #{Thread.current.object_id}")
       @result
     end
 
     # Will perform anything handed to this asynchronously. 
     # Requires a block
     # @return [Thread]
-    def self.a_sync
+    def self.async
       Thread.new do |e|
         yield e
       end
@@ -56,11 +79,11 @@ module Thimble
     end
 
     def manage_workers
-      while (@manager.worker_available? && batch = get_batch)
-        @manager.sub_worker( @manager.get_worker(batch, &Proc.new), @id)
-      end
       @manager.current_workers(@id).each do |pid, pair|
         get_result(pair.worker)
+      end
+      while (@manager.worker_available? && batch = get_batch)
+        @manager.sub_worker( @manager.get_worker(batch, &Proc.new), @id)
       end
       @running = false if !@manager.working? && !batch
     end

@@ -20,7 +20,7 @@ queue = Thimble::ThimbleQueue.new(3, "stage 2")
 # Our array of data
 ary = (1 .. 10).to_a
 # A separate thread worker who will be processing the intermediate queue
-thread = Thimble::Thimble.a_sync do
+thread = Thimble::Thimble.async do
   queue.each {|x| puts "I did work on #{x}!"; sleep 1}
 end
 # Our Thimble, plus it's manager.  Note we are using Thread in this example.
