@@ -1,3 +1,5 @@
+Thread.abort_on_exception=true
+
 module Thimble
   class Manager
     attr_reader :max_workers, :batch_size, :queue_size, :worker_type
@@ -47,7 +49,7 @@ module Thimble
     def get_worker (batch)
       @mutex.synchronize do
         if @worker_type == :fork
-          get_fork_worker(batch, &Proc.new)    
+          get_fork_worker(batch, &Proc.new)
         else
           get_thread_worker(batch, &Proc.new)
         end
@@ -59,7 +61,7 @@ module Thimble
       tup = OpenStruct.new
       pid = fork do
         Signal.trap("HUP") {exit}
-        rd.close 
+        rd.close
         t = Marshal.dump(batch.item.map do |item|
           begin
             yield (item.item)
