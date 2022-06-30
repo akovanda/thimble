@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    thimble (0.0.6)
+    thimble (0.1.0)
 
 GEM
   remote: https://rubygems.org/
@@ -27,3 +27,6 @@ PLATFORMS
 DEPENDENCIES
   rspec
   thimble!
+
+BUNDLED WITH
+   2.3.7
