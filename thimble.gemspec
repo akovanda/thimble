@@ -11,4 +11,5 @@ Gem::Specification.new do |s|
   s.files       = `git ls-files lib MIT-LICENSE.txt`.split("\n")
   s.homepage    = 'https://github.com/akovanda/thimble'
   s.license     = 'MIT'
+  s.required_ruby_version = '>= 3.0.0'
 end
