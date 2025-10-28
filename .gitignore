@@ -1,3 +1,5 @@
 .idea/
 multi.rb
 marshaltest.txt
+vendor/bundle/
+.bundle/
