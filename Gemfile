@@ -3,4 +3,4 @@
 source 'https://rubygems.org'
 gemspec
 
-gem 'rspec'
+gem 'rspec', '~> 3.13'
