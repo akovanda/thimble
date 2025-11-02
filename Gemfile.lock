@@ -2,11 +2,15 @@ PATH
   remote: .
   specs:
     thimble (0.2.0)
+      logger
+      ostruct
 
 GEM
   remote: https://rubygems.org/
   specs:
     diff-lcs (1.6.2)
+    logger (1.7.0)
+    ostruct (0.6.2)
     rspec (3.13.2)
       rspec-core (~> 3.13.0)
       rspec-expectations (~> 3.13.0)

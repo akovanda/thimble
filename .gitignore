@@ -3,3 +3,5 @@ multi.rb
 marshaltest.txt
 vendor/bundle/
 .bundle/
+*.gem
+/pkg/

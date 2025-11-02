@@ -90,10 +90,9 @@ RSpec.describe Thimble::Manager, 'Manager' do
       expect(manager.working?).to eq(true)
       expect(manager.worker_available?).to eq(true)
       
-      # Wait for process to complete
+      # Let the child finish and the pipe deliver results
       sleep 0.1
-      Process.wait(worker.pid)
-      
+
       manager.rem_worker(worker)
       expect(manager.working?).to eq(false)
     end

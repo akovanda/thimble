@@ -3,6 +3,7 @@
 require_relative 'manager'
 require_relative 'thimble_queue'
 require_relative 'queue_item'
+require_relative 'thimble/version'
 require 'io/wait'
 require 'ostruct'
 
@@ -100,10 +101,15 @@ module Thimble
       if @manager.worker_type == :fork
         if tuple.reader.ready?
           piped_result = tuple.reader.read
+          tuple.reader.close unless tuple.reader.closed?
           loadedResult = Marshal.load(piped_result)
           loadedResult.each { |r| raise r if r.class <= Exception }
           push_result(loadedResult)
-          Process.kill('HUP', tuple.pid)
+          begin
+            Process.kill('HUP', tuple.pid)
+          rescue Errno::ESRCH
+            # Process already exited; nothing to do
+          end
           @manager.rem_worker(tuple)
         end
       elsif tuple.done == true
