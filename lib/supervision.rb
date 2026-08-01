@@ -34,7 +34,19 @@ module Thimble
     end
   end
 
+  ShutdownRequest = Struct.new(:mode, :reason, :error, :requested_at, keyword_init: true) do
+    def graceful?
+      mode == :graceful
+    end
+
+    def immediate?
+      mode == :immediate
+    end
+  end
+
   class CancellationToken
+    MODES = %i[graceful immediate].freeze
+
     class Subscription
       def initialize(token, id)
         @token = token
@@ -53,42 +65,74 @@ module Thimble
     def initialize
       @mutex = Mutex.new
       @condition = ConditionVariable.new
-      @error = nil
+      @request = nil
       @callbacks = {}
       @next_callback_id = 0
     end
 
     def cancel(reason = nil)
-      error = normalize_error(reason)
+      request_shutdown(mode: :immediate, reason: reason)
+    end
+
+    def drain(reason = nil)
+      request_shutdown(mode: :graceful, reason: reason)
+    end
+
+    def shutdown(mode:, reason: nil)
+      request_shutdown(mode: mode, reason: reason)
+    end
+
+    def request_shutdown(mode:, reason: nil)
+      validate_mode!(mode)
+      new_request = build_request(mode, reason)
       callbacks = nil
 
       changed = @mutex.synchronize do
-        next false if @error
+        current = @request
+        next false if current&.immediate?
+        next false if current&.mode == mode
 
-        @error = error
+        @request = new_request
         callbacks = @callbacks.values
-        @callbacks.clear
+        @callbacks.clear if new_request.immediate?
         @condition.broadcast
         true
       end
       return false unless changed
 
       callbacks.each do |callback|
-        callback.call(error)
+        callback.call(new_request)
       rescue StandardError
-        # Cancellation must reach every subscriber even if one callback fails.
+        # Every subscriber must observe shutdown even if one callback fails.
         nil
       end
       true
     end
 
+    def shutdown?
+      @mutex.synchronize { !@request.nil? }
+    end
+
+    def draining?
+      @mutex.synchronize { @request&.graceful? || false }
+    end
+
     def cancelled?
-      @mutex.synchronize { !@error.nil? }
+      @mutex.synchronize { @request&.immediate? || false }
     end
     alias canceled? cancelled?
 
+    def request
+      @mutex.synchronize { @request }
+    end
+
     def error
-      @mutex.synchronize { @error }
+      current = request
+      current&.error if current&.immediate?
+    end
+
+    def reason
+      request&.reason
     end
 
     def checkpoint!
@@ -98,28 +142,55 @@ module Thimble
       self
     end
 
+    # Preserves the historical behavior: immediate cancellation returns its
+    # exception. A graceful request returns a ShutdownRequest.
     def wait(timeout: nil)
+      current = wait_for_shutdown(timeout: timeout)
+      return nil unless current
+
+      current.immediate? ? current.error : current
+    end
+
+    def wait_for_shutdown(timeout: nil)
       validate_wait_timeout!(timeout)
       deadline = monotonic_now + timeout if timeout
 
       @mutex.synchronize do
-        until @error
+        until @request
           remaining = deadline && deadline - monotonic_now
           return nil if remaining && remaining <= 0
 
           @condition.wait(@mutex, remaining)
         end
-        @error
+        @request
       end
     end
 
-    def on_cancel(&block)
-      raise ArgumentError, 'on_cancel requires a block' unless block
+    # Waits only for immediate cancellation. Graceful drain requests wake the
+    # waiter so it can re-evaluate the remaining timeout, but do not interrupt
+    # retry backoff for already accepted work.
+    def wait_for_cancel(timeout: nil)
+      validate_wait_timeout!(timeout)
+      deadline = monotonic_now + timeout if timeout
 
-      cancellation = nil
+      @mutex.synchronize do
+        until @request&.immediate?
+          remaining = deadline && deadline - monotonic_now
+          return nil if remaining && remaining <= 0
+
+          @condition.wait(@mutex, remaining)
+        end
+        @request.error
+      end
+    end
+
+    def on_shutdown(&block)
+      raise ArgumentError, 'on_shutdown requires a block' unless block
+
+      current = nil
       subscription = @mutex.synchronize do
-        if @error
-          cancellation = @error
+        current = @request
+        if current&.immediate?
           nil
         else
           @next_callback_id += 1
@@ -129,8 +200,16 @@ module Thimble
         end
       end
 
-      block.call(cancellation) if cancellation
+      block.call(current) if current
       subscription
+    end
+
+    def on_cancel(&block)
+      raise ArgumentError, 'on_cancel requires a block' unless block
+
+      on_shutdown do |shutdown_request|
+        block.call(shutdown_request.error) if shutdown_request.immediate?
+      end
     end
 
     private
@@ -139,11 +218,27 @@ module Thimble
       @mutex.synchronize { !@callbacks.delete(id).nil? }
     end
 
+    def build_request(mode, reason)
+      error = normalize_error(reason) if mode == :immediate
+      ShutdownRequest.new(
+        mode: mode,
+        reason: reason,
+        error: error,
+        requested_at: Time.now
+      )
+    end
+
     def normalize_error(reason)
       return CancelledError.new if reason.nil?
       return reason if reason.is_a?(Exception)
 
       CancelledError.new("execution cancelled: #{reason}", reason: reason)
+    end
+
+    def validate_mode!(mode)
+      return if MODES.include?(mode)
+
+      raise ArgumentError, 'shutdown mode must be :graceful or :immediate'
     end
 
     def validate_wait_timeout!(timeout)
@@ -159,8 +254,8 @@ module Thimble
   end
 
   class Execution
-    STATES = %i[pending running cancelling succeeded failed cancelled timed_out].freeze
-    TERMINAL_STATES = %i[succeeded failed cancelled timed_out].freeze
+    STATES = %i[pending running draining cancelling succeeded drained failed cancelled timed_out].freeze
+    TERMINAL_STATES = %i[succeeded drained failed cancelled timed_out].freeze
 
     attr_reader :name, :timeout, :token
 
@@ -177,17 +272,23 @@ module Thimble
       @condition = ConditionVariable.new
       @state = :pending
       @error = nil
+      @shutdown_request = nil
       @started_at = nil
       @finished_at = nil
       @started_monotonic = nil
       @deadline_monotonic = nil
 
-      @token_subscription = @token.on_cancel do |error|
+      @token_subscription = @token.on_shutdown do |request|
         @mutex.synchronize do
           next if terminal_unlocked?
 
-          @state = :cancelling
-          @error ||= error
+          @shutdown_request = request
+          if request.immediate?
+            @state = :cancelling
+            @error ||= request.error
+          elsif @state != :cancelling
+            @state = :draining
+          end
           @condition.broadcast
         end
       end
@@ -202,7 +303,7 @@ module Thimble
           @started_monotonic = monotonic_now
           @deadline_monotonic = @started_monotonic + timeout if timeout
         end
-        @state = :running unless @token.cancelled?
+        @state = @token.draining? ? :draining : :running unless @token.cancelled?
         @condition.broadcast
       end
       checkpoint!
@@ -224,14 +325,33 @@ module Thimble
       @token.cancel(cancellation_error(reason))
     end
 
+    def drain(reason = nil)
+      return false if finished?
+
+      @token.drain(reason)
+    end
+
+    def shutdown(mode:, reason: nil)
+      return false if finished?
+
+      case mode
+      when :immediate
+        cancel(reason)
+      when :graceful
+        drain(reason)
+      else
+        raise ArgumentError, 'shutdown mode must be :graceful or :immediate'
+      end
+    end
+
     def succeed!
       checkpoint!
       @mutex.synchronize do
-        return self if @state == :succeeded
+        return self if %i[succeeded drained].include?(@state)
         raise @error if @state == :cancelling && @error
         raise RuntimeError, "#{name} has already finished as #{@state}" if terminal_unlocked?
 
-        @state = :succeeded
+        @state = @token.draining? ? :drained : :succeeded
         @finished_at = Time.now
         @condition.broadcast
       end
@@ -281,6 +401,14 @@ module Thimble
       @mutex.synchronize { @error }
     end
 
+    def shutdown_request
+      @mutex.synchronize { @shutdown_request }
+    end
+
+    def shutdown_reason
+      shutdown_request&.reason
+    end
+
     def started_at
       @mutex.synchronize { @started_at }
     end
@@ -313,8 +441,16 @@ module Thimble
       state == :running
     end
 
+    def draining?
+      state == :draining
+    end
+
     def succeeded?
       state == :succeeded
+    end
+
+    def drained?
+      state == :drained
     end
 
     def failed?
