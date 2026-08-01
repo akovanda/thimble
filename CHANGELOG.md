@@ -13,6 +13,11 @@
 - `Execution` lifecycle state, timing, wait, error, and cancellation introspection.
 - Complete-stage `timeout` and per-batch `worker_timeout` controls on every map variant.
 - Cancellation, lifecycle, and timeout helpers on asynchronous result queues.
+- Graceful drain requests with `draining` and `drained` execution states.
+- Bounded `RetryPolicy` backoff with jitter, retry classifiers, and abort classifiers.
+- `AttemptContext`, `FailureContext`, structured `WorkFailedError`, and remote failure snapshots.
+- Dead-letter sinks with explicit `failure_mode: :continue` handling.
+- `ShutdownCoordinator` for self-pipe signal handling, repeated-signal escalation, and grace-period enforcement.
 
 ### Changed
 
@@ -23,6 +28,9 @@
 - Queue close operations wake blocked producers and consumers safely.
 - Queue waits now participate in execution cancellation and deadlines without polling.
 - Fork cancellation escalates from `TERM` to `KILL` when a child does not exit promptly.
+- Graceful shutdown stops root ingress while connected queue stages drain accepted work.
+- Retry backoff participates in cancellation, stage deadlines, and worker deadlines.
+- Calls without retry or dead-letter options retain their historical worker exception types.
 - Runtime support now targets maintained Ruby releases, requiring Ruby 3.3 or newer.
 
 ### Removed
