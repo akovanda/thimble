@@ -1,8 +1,8 @@
 # Thimble
 
-Thimble is a small Ruby runtime for **bounded concurrent pipelines**. It coordinates work across threads or forked processes while keeping queue capacity, batch size, and shared worker limits explicit.
+Thimble is a small Ruby runtime for **bounded concurrent pipelines**. It coordinates work across threads or forked processes while keeping queue capacity, batch size, shared worker limits, retries, and shutdown behavior explicit.
 
-The core use case is a pipeline where one stage discovers or reads data, a bounded queue limits how much can remain in memory, and another stage submits or writes work in controlled batches.
+The core use case is a pipeline where one stage discovers or reads data, bounded queues limit how much can remain in memory, and downstream stages submit or write work in controlled batches.
 
 ## Installation
 
@@ -39,9 +39,9 @@ results = Thimble::Thimble
 p results.to_a
 ```
 
-`queue_size` is the real capacity of the source queue. The source is enumerated lazily after processing starts, so a large finite input is not copied into an unbounded internal array.
+`queue_size` is the actual source-queue capacity. The source is enumerated lazily after processing begins, so a large finite input is not copied into an unbounded internal array.
 
-Parallel stages are unordered. Sort or attach sequence numbers when the original order matters.
+Parallel stages are unordered. Sort results or attach sequence numbers when original order matters.
 
 ## Bounded streaming pipeline
 
@@ -88,7 +88,7 @@ In this example:
 - at most 6 submission responses wait in the final result queue;
 - file contents flow directly into the submission stage;
 - each submission receives an array of up to 20 items;
-- downstream slowdown propagates back through the pipeline instead of allowing memory growth.
+- downstream slowdown propagates back through the pipeline rather than allowing memory growth.
 
 ## Item and batch operations
 
@@ -115,18 +115,19 @@ The final batch may contain fewer than `batch_size` items.
 
 Synchronous transforms buffer their complete result before returning, so their source must report a finite integer size. Use `map_async` or `map_batches_async` for enumerators, open queues, continuous sources, and other unknown-size streams.
 
-## Supervision, cancellation, and timeouts
+## Execution lifecycle, cancellation, and timeouts
 
 Every transform has a `Thimble::Execution` with an explicit lifecycle:
 
 ```text
-pending -> running -> succeeded
+pending -> running  -> succeeded
                    -> failed
-                   -> cancelled
                    -> timed_out
+        -> draining -> drained
+        -> cancelling -> cancelled
 ```
 
-Asynchronous result queues expose that execution directly and provide convenience methods such as `state`, `wait`, `cancel`, `running?`, `succeeded?`, `cancelled?`, `timed_out?`, and `error`.
+Asynchronous result queues expose that execution directly and provide convenience methods such as `state`, `wait`, `drain`, `cancel`, `running?`, `draining?`, `drained?`, `succeeded?`, `cancelled?`, `timed_out?`, and `error`.
 
 ```ruby
 result = Thimble::Thimble
@@ -146,14 +147,125 @@ The supervision options are available on `map`, `map_async`, `map_batches`, and 
 
 | Option | Meaning |
 | --- | --- |
-| `timeout` | Deadline for the complete stage, including source enumeration, worker execution, queue waits, and downstream backpressure |
-| `worker_timeout` | Maximum runtime for one dispatched worker batch |
-| `cancellation` | A shared `Thimble::CancellationToken` used to cancel related stages together |
+| `timeout` | Deadline for the complete stage, including source enumeration, retry backoff, worker execution, queue waits, and downstream backpressure |
+| `worker_timeout` | Maximum runtime for one dispatched worker batch, including its retries and backoff |
+| `cancellation` | A shared `Thimble::CancellationToken` used to stop related stages together |
 
-A shared cancellation token provides pipeline-wide cancellation without global state:
+### Graceful drain versus immediate cancellation
+
+A graceful drain stops root-source ingress at the next cooperative boundary while allowing already accepted queue items and active workers to finish:
 
 ```ruby
 token = Thimble::CancellationToken.new
+
+result = Thimble::Thimble
+  .new(source, manager)
+  .map_async(cancellation: token) { |item| process(item) }
+
+result.drain('rolling deploy')
+result.wait
+puts result.state # => :drained
+```
+
+When several stages share a token, root enumerable sources stop accepting new work and stages whose source is another `ThimbleQueue` continue draining accepted upstream items. A graceful request does not raise at `token.checkpoint!`.
+
+Immediate cancellation aborts queues, discards buffered results, stops active workers, and raises a `Thimble::CancelledError` through the result queue:
+
+```ruby
+token.cancel('forced shutdown')
+# or:
+result.cancel('forced shutdown')
+```
+
+A graceful request may be escalated later by calling `cancel`. External enumerators that are blocked inside their own code remain cooperative; use a stage timeout or `ShutdownCoordinator` grace period when shutdown must eventually become immediate.
+
+## Retries, classification, and dead letters
+
+Retries are opt-in and bounded. `max_attempts` includes the first attempt:
+
+```ruby
+policy = Thimble::RetryPolicy.new(
+  max_attempts: 4,
+  base_delay: 0.1,
+  max_delay: 2.0,
+  multiplier: 2.0,
+  jitter: 0.2,
+  retry_on: [IOError, Errno::ECONNRESET],
+  abort_on: [ArgumentError]
+)
+
+result = Thimble::Thimble
+  .new(events, manager)
+  .map_async(retry_policy: policy) do |event, attempt|
+    logger.info("attempt=#{attempt.attempt} event=#{event.id}")
+    client.deliver(event)
+  end
+```
+
+`retry_policy` accepts a `RetryPolicy`, an integer attempt count, or a hash of `RetryPolicy` options. Backoff is exponential, capped by `max_delay`, and optionally jittered. Immediate cancellation interrupts thread-worker backoff. Graceful drain allows retries for work that was already accepted.
+
+By default, a retry policy matches `StandardError` but rejects common programming and input errors such as `ArgumentError`, `TypeError`, `NameError`, `LocalJumpError`, `FrozenError`, and `ZeroDivisionError`. Supply `retry_on` and `abort_on` exception classes or callables to define workload-specific classification. `abort_on` takes precedence.
+
+When `retry_policy` is supplied, the optional second block argument is a `Thimble::AttemptContext` containing:
+
+- execution name;
+- current and maximum attempt numbers;
+- item or batch input;
+- batch size and batch mode;
+- worker type and worker identity;
+- attempt start time.
+
+Blocks that declare only one argument, including `&:method_name`, retain their existing behavior.
+
+### Structured final failure
+
+When retry or dead-letter options are enabled, an exhausted final failure raises `Thimble::WorkFailedError`. Its `failure` is a `Thimble::FailureContext`, and the original exception is installed as the Ruby exception cause when available:
+
+```ruby
+begin
+  result.to_a
+rescue Thimble::WorkFailedError => error
+  failure = error.failure
+  warn "#{failure.input_summary} failed after #{failure.attempt} attempts"
+  warn "classification=#{failure.classification} cause=#{error.cause}"
+end
+```
+
+`FailureContext` records the payload snapshot, error snapshot, attempt count, retry classification, batch metadata, worker identity, timing, and whether retries were exhausted. Thread workers retain the original input and exception. Fork workers retain them when marshalable and otherwise provide class names, bounded summaries, backtraces, and `RemoteWorkerError` reconstruction.
+
+Calls that do not enable retry, dead-letter, or failure-mode options continue raising the original worker exception type for compatibility.
+
+### Dead-letter continuation
+
+A final failure can be sent to a callable, queue, array, or other object supporting `call`, `push`, or `<<`:
+
+```ruby
+dead_letters = Queue.new
+
+result = Thimble::Thimble
+  .new(events, manager)
+  .map_async(
+    retry_policy: policy,
+    dead_letter: dead_letters,
+    failure_mode: :continue
+  ) do |event|
+    client.deliver(event)
+  end
+```
+
+`failure_mode: :continue` requires a dead-letter sink so failed work cannot disappear silently. The sink receives one `FailureContext` after classification or retry exhaustion. Without `:continue`, the sink is still notified and the stage then fails.
+
+## Coordinated process-signal shutdown
+
+`Thimble::ShutdownCoordinator` routes process signals through a self-pipe to normal Ruby thread context. The first configured signal requests graceful drain; a repeated signal or expired grace period escalates to immediate cancellation.
+
+```ruby
+token = Thimble::CancellationToken.new
+shutdown = Thimble::ShutdownCoordinator.new(
+  token: token,
+  signals: %w[INT TERM],
+  grace_period: 15
+)
 
 contents = Thimble::Thimble
   .new(paths, read_manager)
@@ -163,11 +275,16 @@ responses = Thimble::Thimble
   .new(contents, submit_manager)
   .map_batches_async(cancellation: token) { |batch| client.submit(batch) }
 
-# From a signal handler coordinator, request handler, or shutdown path:
-token.cancel('service shutdown')
+shutdown.register(contents, responses).install
+
+begin
+  responses.each { |response| record_response(response) }
+ensure
+  shutdown.close
+end
 ```
 
-Cancellation and timeout failures abort connected queues, wake blocked producers and consumers, stop active workers, and surface through the asynchronous result queue. Thread-worker blocks that perform long loops can capture the shared token and call token.checkpoint!` for cooperative cancellation. Fork workers cannot observe token changes made after the fork, so the parent terminates and reaps them when cancellation or a timeout occurs.
+Register every execution that must finish during the grace period. `install` and `close` must run on the main Ruby thread because they modify process signal handlers. `close` restores the handlers that were present before installation.
 
 ## Manager options
 
@@ -199,7 +316,7 @@ The two pipelines cannot collectively exceed four active workers.
 
 ## ThimbleQueue
 
-`ThimbleQueue is a bounded multi-producer, multi-consumer queue:
+`ThimbleQueue` is a bounded multi-producer, multi-consumer queue:
 
 ```ruby
 queue = Thimble::ThimbleQueue.new(10, 'records')
@@ -217,12 +334,13 @@ Important semantics:
 - `each`, `next`, and `to_a` consume values destructively;
 - for compatibility, `size` and `length` report capacity; use `current_size` for current depth.
 
-## Failure behavior
+## Failure and worker behavior
 
 - Worker exceptions are propagated to synchronous callers.
 - Asynchronous failures abort the result queue and are raised when the result is consumed.
-- A failed, cancelled, or timed-out stage stops its remaining workers and wakes blocked producers and consumers.
-- `Execution#error`, timestamps, duration, and terminal state preserve structured operation context.
+- A failed, immediately cancelled, or timed-out stage stops its remaining workers and wakes blocked producers and consumers.
+- A gracefully drained stage closes normally after accepted work finishes and reports `:drained` with no execution error.
+- `Execution#error`, timestamps, duration, shutdown reason, and terminal state preserve operation context.
 - Fork workers are explicitly reaped by the parent, with `TERM` followed by `KILL` escalation for uncooperative children.
 - Non-marshallable fork results become a descriptive worker error instead of silently hanging.
 
