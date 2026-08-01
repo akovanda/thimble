@@ -1,126 +1,192 @@
 # Thimble
-Thimble is a Ruby gem for parallelism and concurrency. It lets you choose threads (good for IO) or processes (good for CPU) and build pipelines using stages backed by a thread-safe queue.
 
----
+Thimble is a small Ruby runtime for **bounded concurrent pipelines**. It coordinates work across threads or forked processes while keeping queue capacity, batch size, and shared worker limits explicit.
+
+The core use case is a pipeline where one stage discovers or reads data, a bounded queue limits how much can remain in memory, and another stage submits or writes work in controlled batches.
 
 ## Installation
-Add this line to your application's Gemfile:
 
-```
+Add Thimble to your Gemfile:
+
+```ruby
 gem 'thimble'
 ```
 
-And then execute:
+Then run:
 
-```
+```shell
 bundle install
 ```
 
-Or install it yourself as:
+Thimble supports Ruby 3.3, 3.4, and 4.0. Fork workers require a platform that implements `Process.fork`; use thread workers on Windows and other non-forking runtimes.
 
-```
-gem install thimble
-```
+## Parallel map
 
-## Supported Ruby and platforms
-- Ruby >= 3.0
-- MRI: threads are limited by the GVL for CPU-bound work. Use `worker_type: :fork` for CPU-bound pipelines.
-- JRuby/TruffleRuby: threads can run in parallel; `:thread` often suffices.
-- Windows: `fork` is not available. Use `worker_type: :thread`.
-
-## Quick start
-
-Example 1: parallel map using forked processes (CPU-bound)
-```
+```ruby
 require 'thimble'
 
-manager = Thimble::Manager.new(max_workers: 5, batch_size: 5, queue_size: 10, worker_type: :fork)
-thimble = Thimble::Thimble.new((1..100).to_a, manager)
-results = thimble.map { |x| x * 1000 }
-# results is a Thimble::ThimbleQueue; consume it as needed
+manager = Thimble::Manager.new(
+  max_workers: 8,
+  batch_size: 25,
+  queue_size: 50,
+  worker_type: :thread
+)
+
+results = Thimble::Thimble
+  .new((1..1_000).to_a, manager)
+  .map { |value| value * 2 }
+
 p results.to_a
 ```
 
-Example 2: feed an intermediate queue from a threaded stage (IO-bound)
-```
+`queue_size` is the real capacity of the source queue. The source is enumerated lazily after processing starts, so a large finite input is not copied into an unbounded internal array.
+
+Parallel stages are unordered. Sort or attach sequence numbers when the original order matters.
+
+## Bounded streaming pipeline
+
+Use asynchronous transforms to connect stages without materializing the complete input or output:
+
+```ruby
+require 'pathname'
 require 'thimble'
-# We create a queue to store intermediate work
-queue = Thimble::ThimbleQueue.new(3, 'stage 2')
-# Our array of data
-ary = (1..10).to_a
-# A separate thread worker who will be processing the intermediate queue
-thread = Thimble::Thimble.async do
-  queue.each { |x| puts "I did work on #{x}!"; sleep 1 }
+
+paths = Enumerator.new do |out|
+  Pathname('incoming').find do |path|
+    out << path if path.file?
+  end
 end
-# Our Thimble, plus its manager. Note we are using Thread in this example.
-thim = Thimble::Thimble.new(ary, Thimble::Manager.new(batch_size: 1, worker_type: :thread))
-# We in parallel push data to the Thimble Queue
-thim.map { |e| queue.push(e); sleep 0.1; puts "I pushed #{e} to the queue!" }
-# The queue is closed (no more work can come in)
-queue.close
-# join the thread
-thread.join
+
+read_manager = Thimble::Manager.new(
+  max_workers: 8,
+  batch_size: 1,
+  queue_size: 16,
+  worker_type: :thread
+)
+
+contents = Thimble::Thimble
+  .new(paths, read_manager)
+  .map_async { |path| [path, File.binread(path)] }
+
+submit_manager = Thimble::Manager.new(
+  max_workers: 3,
+  batch_size: 20,
+  queue_size: 6,
+  worker_type: :thread
+)
+
+responses = Thimble::Thimble
+  .new(contents, submit_manager)
+  .map_batches_async { |batch| remote_client.submit(batch) }
+
+responses.each { |response| record_response(response) }
 ```
 
-Manager quick reference
+In this example:
+
+- at most 16 file paths wait in the read-stage input queue;
+- at most 6 submission responses wait in the final result queue;
+- file contents flow directly into the submission stage;
+- each submission receives an array of up to 20 items;
+- downstream slowdown propagates back through the pipeline instead of allowing memory growth.
+
+## Item and batch operations
+
+`map` and `map_async` call the block once per item.
+
+`map_batches` and `map_batches_async` call the block once per worker batch:
+
+```ruby
+manager = Thimble::Manager.new(
+  max_workers: 2,
+  batch_size: 100,
+  queue_size: 10,
+  worker_type: :thread
+)
+
+responses = Thimble::Thimble
+  .new(events, manager)
+  .map_batches_async { |batch| client.bulk_insert(batch) }
+
+responses.each { |response| puts response }
 ```
-m = Thimble::Manager.new(max_workers: 10, batch_size: 100, worker_type: :fork)
-Thimble::Thimble.new(array, m)
+
+The final batch may contain fewer than `batch_size` items.
+
+Synchronous transforms buffer their complete result before returning, so their source must report a finite integer size. Use `map_async` or `map_batches_async` for enumerators, open queues, continuous sources, and other unknown-size streams.
+
+## Manager options
+
+| Option | Meaning |
+| --- | --- |
+| `max_workers` | Maximum active workers shared by every Thimble using this manager |
+| `batch_size` | Items assigned to each worker, or exposed to each `map_batches` call |
+| `queue_size` | Capacity of source queues and automatically created asynchronous result queues |
+| `worker_type` | `:thread` or `:fork` |
+
+Sharing one manager creates a common concurrency budget:
+
+```ruby
+api_budget = Thimble::Manager.new(
+  max_workers: 4,
+  batch_size: 10,
+  queue_size: 20,
+  worker_type: :thread
+)
+
+first  = Thimble::Thimble.new(first_source, api_budget)
+second = Thimble::Thimble.new(second_source, api_budget)
+
+first_results  = first.map_async  { |item| api.call(item) }
+second_results = second.map_async { |item| api.call(item) }
 ```
-- max_workers: how many workers can run at the same time
-- batch_size: how many items to send to each worker (tune for workload)
-- worker_type: :thread or :fork
 
-The same Manager can be shared across Thimble instances to coordinate concurrency limits.
-
-All thimbles require an explicit manager.
-
----
+The two pipelines cannot collectively exceed four active workers.
 
 ## ThimbleQueue
-ThimbleQueue is the queue underpinning Thimble. Taking from it is destructive. It is thread-safe for multi-thread producers/consumers.
 
+`ThimbleQueue` is a bounded multi-producer, multi-consumer queue:
+
+```ruby
+queue = Thimble::ThimbleQueue.new(10, 'records')
+queue.push(record)
+queue.close
+queue.each { |item| consume(item) }
 ```
-q = Thimble::ThimbleQueue.new(10, 'name')
-q.push(1)
-q.close
-q.each { |x| puts x }
-# => 1
-```
-If you do not close the queue, consumers will wait for more data. Creating a Thimble creates a "closed" input queue; transformations create a new queue.
 
----
+Important semantics:
 
-## Caveats and best practices
-These are common pitfalls and how Thimble helps you avoid them:
+- `push` blocks while the queue is full;
+- `close` rejects new values and lets consumers drain existing values;
+- `close(true)` closes immediately and discards buffered values;
+- `abort(error)` closes immediately and raises the error in blocked and future producers and consumers;
+- `each`, `next`, and `to_a` consume values destructively;
+- for compatibility, `size` and `length` report capacity; use `current_size` for current depth.
 
-- MRI GVL and workload choice
-  - Threads do not run CPU-bound Ruby in parallel on MRI. Use `worker_type: :fork` for CPU-bound tasks; `:thread` shines for IO-bound tasks.
-- Platform differences
-  - `fork` is Unix-only. On Windows, use `:thread`.
-- Forking and safety
-  - Thimble forks child workers before creating additional threads inside children. Children trap HUP and exit cleanly; the parent detaches workers to avoid zombies.
-  - Recreate external resources in children (DB connections, sockets, clients). Don’t share them across a fork.
-- Memory and copy-on-write
-  - Each process has its own heap and GC. Batching reduces IPC overhead. Freeze large constants to improve CoW where possible.
-- Backpressure
-  - ThimbleQueue is bounded; tune `queue_size` to avoid unbounded growth.
-- Shutdown
-  - ThimbleQueue supports `close` and `close(true)` for immediate close. Avoid closing from multiple places.
-- Error propagation
-  - Exceptions in workers are propagated back through results. For `:thread`, thread exceptions are surfaced; for `:fork`, exceptions are marshaled back and re-raised when consumed.
-- Signal handling
-  - The main process receives signals; Thimble sends HUP to child workers when their results are consumed.
-- Ordering
-  - Parallel stages may reorder results. If you need original order, attach sequence numbers to items and reorder at the end.
-- Tuning
-  - Start with `max_workers` ~ number of cores for CPU-bound, higher for IO-bound. Adjust `batch_size` to minimize overhead without starving workers.
+## Failure behavior
 
----
+- Worker exceptions are propagated to synchronous callers.
+- Asynchronous failures abort the result queue and are raised when the result is consumed.
+- A failed stage stops its remaining workers and wakes blocked producers and consumers.
+- Fork workers are explicitly reaped by the parent.
+- Non-marshallable fork results become a descriptive worker error instead of silently hanging.
+
+## Choosing a worker type
+
+### Threads
+
+Choose threads for file, socket, HTTP, database, and other blocking I/O. Thimble does not modify the process-wide `Thread.abort_on_exception` setting.
+
+### Forks
+
+Choose forks for CPU-bound Ruby on MRI when process isolation and serialization overhead are acceptable. Values crossing the process boundary must be marshalable. Recreate database connections, network clients, and other external resources inside child work rather than sharing them across a fork.
 
 ## Development
-- Run tests: `bundle exec rspec`
-- Linting: consider adding RuboCop (`rubocop`)
-- Releasing: bump `Thimble::VERSION` in `lib/thimble/version.rb`, tag and push, then build and push the gem
 
-Contributions welcome! Please open issues and PRs.
+```shell
+bundle install
+bundle exec rake
+bundle exec gem build thimble.gemspec
+```
+
+See [ROADMAP.md](ROADMAP.md) for the next architectural milestones and [CHANGELOG.md](CHANGELOG.md) for release notes.

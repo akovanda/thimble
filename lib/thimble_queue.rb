@@ -1,162 +1,175 @@
 # frozen_string_literal: true
 
 require 'logger'
+require 'securerandom'
 require_relative 'queue_item'
 
 module Thimble
-  # noinspection RubyTooManyInstanceVariablesInspection
+  class ClosedQueueError < RuntimeError; end
+
   class ThimbleQueue
-    def initialize(size, name)
-      unless size >= 1
-        raise ArgumentError, "make sure there is a size for the queue greater than 1! size received #{size}"
+    include Enumerable
+
+    attr_reader :capacity
+
+    def initialize(size, name, logger: nil)
+      unless size.is_a?(Integer) && size.positive?
+        raise ArgumentError, "queue size must be an integer greater than 0; received #{size.inspect}"
       end
 
-      @id = Digest::SHA256.digest(rand(10**100).to_s + Time.now.to_i.to_s)
+      @id = SecureRandom.uuid
       @name = name
-      @size = size
+      @capacity = size
       @mutex = Mutex.new
       @queue = []
       @closed = false
       @close_now = false
+      @error = nil
       @empty = ConditionVariable.new
       @full = ConditionVariable.new
-      @logger = Logger.new($stdout)
-      @logger.sev_threshold = Logger::UNKNOWN
+      @logger = logger || Logger.new($stdout)
+      @logger.level = Logger::UNKNOWN
     end
 
-    include Enumerable
-    attr_reader :size
+    # Compatibility: historically #size and #length reported capacity, not depth.
+    alias size capacity
+
+    def length
+      capacity
+    end
+
+    def current_size
+      @mutex.synchronize { @queue.size }
+    end
+
+    def empty?
+      current_size.zero?
+    end
+
+    def full?
+      current_size >= capacity
+    end
 
     def set_logger(level)
-      @logger.sev_threshold = level
+      @logger.level = level
+      self
     end
 
     def each
+      return enum_for(:each) unless block_given?
+
       while (item = self.next)
         yield item.item
       end
     end
 
-    # Returns the size of the ThimbleQueue
-    # @return [Integer]
-    def length
-      size
-    end
-
-    # Will concatenate an enumerable to the ThimbleQueue
-    # @return [ThimbleQueue]
-    # @param [Module<Enumerable>] other
+    # Will concatenate an enumerable to the ThimbleQueue.
+    # Reading either queue is destructive, matching the historical behavior.
     def +(other)
-      raise ArgumentError, '+ requires another Enumerable!' unless other.class < Enumerable
+      raise ArgumentError, '+ requires another Enumerable!' unless other.respond_to?(:each)
 
-      merged_thimble = ThimbleQueue.new(length + other.length, @name)
-      each { |item| merged_thimble.push(item) }
-      other.each { |item| merged_thimble.push(item) }
+      values = to_a
+      other.each { |item| values << item }
+      merged_thimble = ThimbleQueue.new([values.length, 1].max, @name)
+      merged_thimble.push_flat(values)
       merged_thimble
     end
 
-    # Returns the first item in the queue
-    # @return [Object]
     def next
       @mutex.synchronize do
-        until @close_now
-          a = @queue.shift
-          @logger.debug("#{@name}'s queue shifted to: #{a}")
-          if !a.nil?
-            @full.broadcast
-            @empty.broadcast
-            return a
-          else
-            @logger.debug("#{@name}'s queue is currently closed?: #{closed?}")
-            return nil if closed?
+        loop do
+          raise @error if @error
 
-            @empty.wait(@mutex)
+          unless @queue.empty?
+            item = @queue.shift
+            @logger.debug("#{@name}'s queue shifted to: #{item}")
+            @full.signal
+            return item
           end
+
+          return nil if @closed
+
+          @empty.wait(@mutex)
         end
       end
     end
 
-    # This will push whatever it is handed to the queue
-    # @param [Object] input_item
     def push(input_item)
-      raise 'Queue is closed!' if @closed
-
       @logger.debug("Pushing into #{@name} values: #{input_item}")
+
       @mutex.synchronize do
-        until offer(input_item)
-          @full.wait(@mutex)
+        loop do
+          raise @error if @error
+          raise ClosedQueueError, "#{@name} is closed" if @closed
+
+          if @queue.size < @capacity
+            @queue << QueueItem.new(input_item)
+            @empty.signal
+            break
+          end
+
           @logger.debug("#{@name} is waiting on full")
+          @full.wait(@mutex)
         end
-        @empty.broadcast
       end
-      @logger.debug("Finished pushing int #{@name}: #{input_item}")
+
+      @logger.debug("Finished pushing into #{@name}: #{input_item}")
+      self
     end
 
-    # This will flatten any nested arrays out and feed them one at
-    # a time to the queue.
-    # @return [nil]
-    # @param [Object] input_item
+    # Flattens the outer enumerable by one level and pushes each value.
     def push_flat(input_item)
-      raise 'Queue is closed!' if @closed
-
-      @logger.debug("Pushing flat into #{@name} values: #{input_item}")
-      if input_item.respond_to? :each
+      if input_item.respond_to?(:each)
         input_item.each { |item| push(item) }
       else
-        @mutex.synchronize do
-          until offer(input_item)
-            @logger.debug("#{@name} is waiting on full")
-            @full.wait(@mutex)
-          end
-          @empty.broadcast
-        end
+        push(input_item)
       end
-      @logger.debug("Finished pushing flat into #{@name} values: #{input_item}")
+      self
     end
 
-    # Closes the ThimbleQueue
-    # @param [TrueClass, FalseClass]
-    # @return [nil]
     def close(now = false)
       raise ArgumentError, 'now must be true or false' unless [true, false].include?(now)
 
       @logger.debug("#{@name} is closing")
       @mutex.synchronize do
         @closed = true
-        @close_now = true if now
+        if now
+          @close_now = true
+          @queue.clear
+        end
         @full.broadcast
         @empty.broadcast
       end
       @logger.debug("#{@name} is closed: #{@closed} now: #{@close_now}")
+      self
     end
 
-    # Will force the ThimbleQueue into an array
-    # @return [Array[Object]]
-    def to_a
-      a = []
-      while (item = self.next)
-        a << item.item
-      end
-      a
-    end
+    # Terminates the queue immediately and propagates +error+ to blocked and
+    # future consumers/producers.
+    def abort(error)
+      raise ArgumentError, 'error must be an Exception' unless error.is_a?(Exception)
 
-    # checks if the ThimbleQueue is closed
-    # @return [TrueClass, FalseClass]
-    def closed?
-      @closed
-    end
-
-    private
-
-    # @param [Object] x
-    def offer(x)
-      if @queue.size < @size
-        @queue << QueueItem.new(x)
+      @mutex.synchronize do
+        @error = error
+        @closed = true
+        @close_now = true
+        @queue.clear
+        @full.broadcast
         @empty.broadcast
-        true
-      else
-        false
       end
+      self
+    end
+
+    def to_a
+      each.to_a
+    end
+
+    def closed?
+      @mutex.synchronize { @closed }
+    end
+
+    def aborted?
+      @mutex.synchronize { !@error.nil? }
     end
   end
 end
