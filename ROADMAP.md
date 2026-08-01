@@ -13,23 +13,21 @@ Thimble is being developed as a bounded pipeline runtime rather than a generic r
 - explicit execution lifecycle states and timing context;
 - shared cooperative cancellation tokens;
 - complete-stage and per-worker timeouts;
-- cancellation propagation through blocked queues and connected stages.
+- cancellation propagation through blocked queues and connected stages;
+- graceful drain with explicit immediate-cancellation escalation;
+- bounded exponential retry policies with jitter and exception classification;
+- item, batch, attempt, and final-failure context;
+- dead-letter hooks with explicit continue-versus-fail behavior;
+- signal-safe shutdown coordination with grace-period escalation.
 
-## Next: complete pipeline supervision
-
-- graceful drain versus immediate cancellation;
-- retry policies with bounded exponential backoff and jitter;
-- structured item, batch, and attempt failure context;
-- configurable retry classification and dead-letter hooks;
-- signal-friendly shutdown orchestration for multiple stages.
-
-## Next: first-class stages
+## Next: first-class stages and pipeline composition
 
 - `source`, `map`, `filter`, `flat_map`, `batch`, and `sink` stages;
 - batching by item count, estimated bytes, elapsed time, and grouping key;
+- a pipeline builder that owns stage startup, dependency order, and coordinated shutdown;
 - ordered and unordered result modes;
 - named resource limits for disk, network, API, and CPU budgets;
-- a pipeline builder that preserves the existing low-level API.
+- preserve the existing low-level `Thimble` and `ThimbleQueue` APIs as building blocks.
 
 ## Next: persistent executors
 
@@ -41,7 +39,7 @@ Thimble is being developed as a bounded pipeline runtime rather than a generic r
 
 ## Later: observability and alternate runtimes
 
-- event subscriptions for queue depth, wait time, worker utilization, retries, and failures;
+- event subscriptions for queue depth, wait time, worker utilization, retries, dead letters, and failures;
 - adapters for structured logging and OpenTelemetry;
 - benchmark and allocation suites;
 - Fiber-scheduler integration for compatible I/O clients;
@@ -51,4 +49,4 @@ Thimble is being developed as a bounded pipeline runtime rather than a generic r
 
 - durable or distributed job storage;
 - replacing Sidekiq, Active Job, or message brokers;
-- hiding backpressure or retry behavior behind implicit global configuration.
+- hiding backpressure, retries, or shutdown behavior behind implicit global configuration.
