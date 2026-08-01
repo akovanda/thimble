@@ -72,15 +72,19 @@ module Thimble
     end
 
     def cancel(reason = nil)
-      raise RuntimeError, 'queue is not attached to an execution' unless @execution
+      attached_execution.cancel(reason)
+    end
 
-      @execution.cancel(reason)
+    def drain(reason = nil)
+      attached_execution.drain(reason)
+    end
+
+    def shutdown(mode:, reason: nil)
+      attached_execution.shutdown(mode: mode, reason: reason)
     end
 
     def wait(timeout: nil)
-      raise RuntimeError, 'queue is not attached to an execution' unless @execution
-
-      @execution.wait(timeout: timeout)
+      attached_execution.wait(timeout: timeout)
     end
 
     def state
@@ -94,6 +98,10 @@ module Thimble
       @mutex.synchronize { @error }
     end
 
+    def shutdown_reason
+      @execution&.shutdown_reason
+    end
+
     def finished?
       @execution&.finished? || false
     end
@@ -102,8 +110,16 @@ module Thimble
       @execution&.running? || false
     end
 
+    def draining?
+      @execution&.draining? || false
+    end
+
     def succeeded?
       @execution&.succeeded? || false
+    end
+
+    def drained?
+      @execution&.drained? || false
     end
 
     def failed?
@@ -165,13 +181,17 @@ module Thimble
       end
     end
 
-    def push(input_item, control: nil)
+    # When +stop_on_drain+ is true, a graceful execution drain prevents the
+    # producer from accepting another item and returns false. This is used by
+    # root sources; downstream queue sources continue draining accepted work.
+    def push(input_item, control: nil, stop_on_drain: false)
       @logger.debug("Pushing into #{@name} values: #{input_item}")
 
       loop do
         control&.checkpoint!
-        wait_timeout = control&.remaining_time
+        return false if stop_on_drain && control&.draining?
 
+        wait_timeout = control&.remaining_time
         action = @mutex.synchronize do
           raise @error if @error
           raise ClosedQueueError, "#{@name} is closed" if @closed
@@ -194,11 +214,14 @@ module Thimble
     end
 
     # Flattens the outer enumerable by one level and pushes each value.
-    def push_flat(input_item, control: nil)
+    def push_flat(input_item, control: nil, stop_on_drain: false)
       if input_item.respond_to?(:each)
-        input_item.each { |item| push(item, control: control) }
+        input_item.each do |item|
+          accepted = push(item, control: control, stop_on_drain: stop_on_drain)
+          return false unless accepted
+        end
       else
-        push(input_item, control: control)
+        return false unless push(input_item, control: control, stop_on_drain: stop_on_drain)
       end
       self
     end
@@ -240,6 +263,17 @@ module Thimble
       self
     end
 
+    # Wakes blocked producers and consumers without changing queue state. This
+    # lets graceful shutdown requests interrupt waits so root producers can stop
+    # accepting work while consumers continue draining accepted values.
+    def wake_waiters
+      @mutex.synchronize do
+        @full.broadcast
+        @empty.broadcast
+      end
+      self
+    end
+
     def to_a
       each.to_a
     end
@@ -250,6 +284,14 @@ module Thimble
 
     def aborted?
       @mutex.synchronize { !@error.nil? }
+    end
+
+    private
+
+    def attached_execution
+      raise RuntimeError, 'queue is not attached to an execution' unless @execution
+
+      @execution
     end
   end
 end
