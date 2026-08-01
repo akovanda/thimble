@@ -9,16 +9,19 @@ Thimble is being developed as a bounded pipeline runtime rather than a generic r
 - shared concurrency budgets;
 - thread and fork execution;
 - explicit worker failure propagation;
-- deterministic close, abort, and process-reaping behavior.
+- deterministic close, abort, and process-reaping behavior;
+- explicit execution lifecycle states and timing context;
+- shared cooperative cancellation tokens;
+- complete-stage and per-worker timeouts;
+- cancellation propagation through blocked queues and connected stages.
 
-## Next: pipeline supervision
+## Next: complete pipeline supervision
 
-- explicit pipeline lifecycle states;
-- cooperative cancellation tokens;
-- stage and worker timeouts;
-- graceful versus immediate shutdown;
-- retry policies with bounded backoff;
-- structured success and failure context.
+- graceful drain versus immediate cancellation;
+- retry policies with bounded exponential backoff and jitter;
+- structured item, batch, and attempt failure context;
+- configurable retry classification and dead-letter hooks;
+- signal-friendly shutdown orchestration for multiple stages.
 
 ## Next: first-class stages
 

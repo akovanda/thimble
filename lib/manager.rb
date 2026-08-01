@@ -1,12 +1,17 @@
 # frozen_string_literal: true
 
+require_relative 'supervision'
+
 module Thimble
   class WorkerProcessError < RuntimeError; end
 
-  Worker = Struct.new(:pid, :reader, :result, :error, :done, keyword_init: true)
+  Worker = Struct.new(:pid, :reader, :result, :error, :done, :started_at, :batch_size, keyword_init: true)
   WorkerRegistration = Struct.new(:worker, :id, keyword_init: true)
 
   class Manager
+    PROCESS_TERM_GRACE = 0.25
+    PROCESS_WAIT_INTERVAL = 0.01
+
     attr_reader :max_workers, :batch_size, :queue_size, :worker_type
 
     def initialize(max_workers: 6, batch_size: 1000, queue_size: 1000, worker_type: :fork)
@@ -52,7 +57,8 @@ module Thimble
       end
       return nil unless reservation_active
 
-      worker = get_worker(batch, batch_mode: batch_mode, &block)
+      started_at = monotonic_now
+      worker = get_worker(batch, batch_mode: batch_mode, started_at: started_at, &block)
       @mutex.synchronize do
         @reserved_workers -= 1
         reservation_active = false
@@ -75,6 +81,7 @@ module Thimble
     def sub_worker(worker, id)
       raise 'Worker must contain a pid!' if worker.pid.nil?
 
+      worker.started_at ||= monotonic_now
       @mutex.synchronize do
         @current_workers[worker.pid] = WorkerRegistration.new(worker: worker, id: id)
         @condition.broadcast
@@ -108,36 +115,77 @@ module Thimble
       end
     end
 
-    # Blocks until this pipeline can make progress: one of its workers finishes,
-    # a shared worker slot opens, or it has no remaining workers.
-    def wait_for_change(id, wait_for_capacity: true)
+    def timed_out_workers(id, timeout)
+      return [] unless timeout
+
+      now = monotonic_now
+      @mutex.synchronize do
+        @current_workers.filter_map do |_key, registration|
+          next unless registration.id == id
+
+          worker = registration.worker
+          worker if !worker.done && worker.started_at && now - worker.started_at >= timeout
+        end
+      end
+    end
+
+    def time_until_worker_timeout(id, timeout)
+      return nil unless timeout
+
+      now = monotonic_now
+      @mutex.synchronize do
+        remaining = @current_workers.filter_map do |_key, registration|
+          next unless registration.id == id
+
+          worker = registration.worker
+          next if worker.done || !worker.started_at
+
+          timeout - (now - worker.started_at)
+        end
+        remaining.empty? ? nil : [remaining.min, 0.0].max
+      end
+    end
+
+    # Blocks until this pipeline can make progress or the optional timeout
+    # expires. Callers re-check their execution deadline after every wake-up.
+    def wait_for_change(id, wait_for_capacity: true, timeout: nil)
+      validate_wait_timeout!(timeout)
       return if wait_for_capacity && worker_available?
 
       if @worker_type == :fork
         readers = current_workers(id).values.filter_map do |entry|
           entry.worker.reader unless entry.worker.reader.closed?
         end
-        return IO.select(readers, nil, nil, 0.1) unless readers.empty?
+        unless readers.empty?
+          select_timeout = timeout.nil? ? 0.1 : [timeout, 0.1].min
+          IO.select(readers, nil, nil, select_timeout)
+          return
+        end
       end
 
       @mutex.synchronize do
-        until (wait_for_capacity && worker_available_unlocked?) ||
-              completed_worker_unlocked?(id) ||
-              (!wait_for_capacity && !working_for_unlocked?(id))
-          @condition.wait(@mutex)
-        end
+        return if (wait_for_capacity && worker_available_unlocked?) ||
+                  completed_worker_unlocked?(id) ||
+                  (!wait_for_capacity && !working_for_unlocked?(id))
+
+        @condition.wait(@mutex, timeout)
       end
     end
 
-    def get_worker(batch, batch_mode: false, &block)
+    def signal_change
+      @mutex.synchronize { @condition.broadcast }
+      self
+    end
+
+    def get_worker(batch, batch_mode: false, started_at: monotonic_now, &block)
       if @worker_type == :fork
-        get_fork_worker(batch, batch_mode: batch_mode, &block)
+        get_fork_worker(batch, batch_mode: batch_mode, started_at: started_at, &block)
       else
-        get_thread_worker(batch, batch_mode: batch_mode, &block)
+        get_thread_worker(batch, batch_mode: batch_mode, started_at: started_at, &block)
       end
     end
 
-    def get_fork_worker(batch, batch_mode: false)
+    def get_fork_worker(batch, batch_mode: false, started_at: monotonic_now)
       reader, writer = IO.pipe
       pid = fork do
         reader.close
@@ -152,11 +200,17 @@ module Thimble
         exit! 0
       end
       writer.close
-      Worker.new(pid: pid, reader: reader, done: false)
+      Worker.new(
+        pid: pid,
+        reader: reader,
+        done: false,
+        started_at: started_at,
+        batch_size: batch.item.size
+      )
     end
 
-    def get_thread_worker(batch, batch_mode: false)
-      worker = Worker.new(done: false)
+    def get_thread_worker(batch, batch_mode: false, started_at: monotonic_now)
+      worker = Worker.new(done: false, started_at: started_at, batch_size: batch.item.size)
       worker.pid = Thread.new do
         begin
           worker.result = execute_batch(batch, batch_mode) { |value| yield value }
@@ -205,6 +259,13 @@ module Thimble
       raise ArgumentError, "#{name} must be an integer greater than 0"
     end
 
+    def validate_wait_timeout!(value)
+      return if value.nil?
+      return if value.is_a?(Numeric) && value >= 0 && (!value.respond_to?(:finite?) || value.finite?)
+
+      raise ArgumentError, 'timeout must be a finite number greater than or equal to 0'
+    end
+
     def worker_available_unlocked?
       @current_workers.size + @reserved_workers < @max_workers
     end
@@ -249,15 +310,38 @@ module Thimble
     end
 
     def terminate_process(pid)
-      Process.kill('TERM', pid)
-    rescue Errno::ESRCH
-      nil
-    ensure
       begin
-        Process.waitpid(pid)
-      rescue Errno::ECHILD
-        nil
+        Process.kill('TERM', pid)
+      rescue Errno::ESRCH
+        # The child may have exited but still needs to be reaped.
       end
+
+      deadline = monotonic_now + PROCESS_TERM_GRACE
+      loop do
+        waited = Process.waitpid(pid, Process::WNOHANG)
+        return if waited
+        break if monotonic_now >= deadline
+
+        sleep PROCESS_WAIT_INTERVAL
+      rescue Errno::ECHILD
+        return
+      end
+
+      begin
+        Process.kill('KILL', pid)
+      rescue Errno::ESRCH
+        nil
+      ensure
+        begin
+          Process.waitpid(pid)
+        rescue Errno::ECHILD
+          nil
+        end
+      end
+    end
+
+    def monotonic_now
+      Process.clock_gettime(Process::CLOCK_MONOTONIC)
     end
   end
 end
