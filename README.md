@@ -115,6 +115,60 @@ The final batch may contain fewer than `batch_size` items.
 
 Synchronous transforms buffer their complete result before returning, so their source must report a finite integer size. Use `map_async` or `map_batches_async` for enumerators, open queues, continuous sources, and other unknown-size streams.
 
+## Supervision, cancellation, and timeouts
+
+Every transform has a `Thimble::Execution` with an explicit lifecycle:
+
+```text
+pending -> running -> succeeded
+                   -> failed
+                   -> cancelled
+                   -> timed_out
+```
+
+Asynchronous result queues expose that execution directly and provide convenience methods such as `state`, `wait`, `cancel`, `running?`, `succeeded?`, `cancelled?`, `timed_out?`, and `error`.
+
+```ruby
+result = Thimble::Thimble
+  .new(events, manager)
+  .map_async(timeout: 30, worker_timeout: 5) do |event|
+    client.deliver(event)
+  end
+
+unless result.wait(timeout: 35)
+  result.cancel('caller stopped waiting')
+end
+
+raise result.error if result.failed? || result.timed_out?
+```
+
+The supervision options are available on `map`, `map_async`, `map_batches`, and `map_batches_async`:
+
+| Option | Meaning |
+| --- | --- |
+| `timeout` | Deadline for the complete stage, including source enumeration, worker execution, queue waits, and downstream backpressure |
+| `worker_timeout` | Maximum runtime for one dispatched worker batch |
+| `cancellation` | A shared `Thimble::CancellationToken` used to cancel related stages together |
+
+A shared cancellation token provides pipeline-wide cancellation without global state:
+
+```ruby
+token = Thimble::CancellationToken.new
+
+contents = Thimble::Thimble
+  .new(paths, read_manager)
+  .map_async(cancellation: token) { |path| File.binread(path) }
+
+responses = Thimble::Thimble
+  .new(contents, submit_manager)
+  .map_batches_async(cancellation: token) { |batch| client.submit(batch) }
+
+# From a signal handler coordinator, request handler, or shutdown path:
+token.cancel('service shutdown')
+```
+
+Cancellation and timeout failures abort connected queues, wake blocked producers and consumers, stop active workers, and surface through the asynchronous result queue. Thread-worker blocks that perform long loops can capture the shared token and call token.checkpoint!` for cooperative cancellation. Fork workers cannot observe token changes made after the fork, so the parent terminates and reaps them when cancellation or a timeout occurs.
+
 ## Manager options
 
 | Option | Meaning |
@@ -145,7 +199,7 @@ The two pipelines cannot collectively exceed four active workers.
 
 ## ThimbleQueue
 
-`ThimbleQueue` is a bounded multi-producer, multi-consumer queue:
+`ThimbleQueue is a bounded multi-producer, multi-consumer queue:
 
 ```ruby
 queue = Thimble::ThimbleQueue.new(10, 'records')
@@ -167,8 +221,9 @@ Important semantics:
 
 - Worker exceptions are propagated to synchronous callers.
 - Asynchronous failures abort the result queue and are raised when the result is consumed.
-- A failed stage stops its remaining workers and wakes blocked producers and consumers.
-- Fork workers are explicitly reaped by the parent.
+- A failed, cancelled, or timed-out stage stops its remaining workers and wakes blocked producers and consumers.
+- `Execution#error`, timestamps, duration, and terminal state preserve structured operation context.
+- Fork workers are explicitly reaped by the parent, with `TERM` followed by `KILL` escalation for uncooperative children.
 - Non-marshallable fork results become a descriptive worker error instead of silently hanging.
 
 ## Choosing a worker type
